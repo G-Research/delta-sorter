@@ -1,0 +1,20 @@
+# Rust
+target/
+Cargo.lock
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Misc
+*.log
+
