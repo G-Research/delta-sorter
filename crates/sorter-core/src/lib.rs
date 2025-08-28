@@ -25,6 +25,12 @@ enum SortVal {
     Other(String),
 }
 
+/// Compare two sort values with NULL handling.
+///
+/// Assumes values originate from the same column across rows/files and thus
+/// have the same logical type (except for NULL). If mismatched non-NULL types
+/// are encountered, the comparison falls back to a stable but arbitrary
+/// ordering and triggers a debug assertion.
 fn cmp_sort_val_with_nulls(a: &SortVal, b: &SortVal, nulls_first: bool) -> std::cmp::Ordering {
     use std::cmp::Ordering::*;
     match (a, b) {
@@ -33,12 +39,20 @@ fn cmp_sort_val_with_nulls(a: &SortVal, b: &SortVal, nulls_first: bool) -> std::
         (_, SortVal::Null) => if nulls_first { Greater } else { Less },
         (SortVal::Bool(x), SortVal::Bool(y)) => x.cmp(y),
         (SortVal::Int(x), SortVal::Int(y)) => x.cmp(y),
-        (SortVal::Int(x), SortVal::Float(y)) => (*x as f64).partial_cmp(y).unwrap_or(Equal),
-        (SortVal::Float(x), SortVal::Int(y)) => x.partial_cmp(&(*y as f64)).unwrap_or(Equal),
         (SortVal::Float(x), SortVal::Float(y)) => x.partial_cmp(y).unwrap_or(Equal),
         (SortVal::Ts(x), SortVal::Ts(y)) => x.cmp(y),
         (SortVal::Str(x), SortVal::Str(y)) => x.cmp(y),
-        (ax, by) => format!("{:?}", ax).cmp(&format!("{:?}", by)),
+        // Mismatched non-NULL types: should not occur with a consistent schema.
+        // Use a stable but arbitrary ordering and flag in debug builds.
+        (ax, by) => {
+            debug_assert!(
+                std::mem::discriminant(ax) == std::mem::discriminant(by),
+                "mismatched sort value types: {:?} vs {:?}",
+                ax,
+                by
+            );
+            format!("{:?}", ax).cmp(&format!("{:?}", by))
+        },
     }
 }
 
