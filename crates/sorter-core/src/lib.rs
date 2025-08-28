@@ -150,7 +150,7 @@ pub async fn compact_with_sort(table_uri: &str, cfg: SortConfig) -> Result<()> {
             info!("dry-run: would execute full-table sorted overwrite");
             return Ok(());
         }
-        return commit_sorted_overwrite(table_uri, &cfg).await;
+        return commit_full_sorted_overwrite(table_uri, &cfg.sort_columns, cfg.nulls_first).await;
     } else {
         let plan = match plan_rewrites(table_uri, &cfg).await {
             Ok(p) => p,
@@ -390,7 +390,11 @@ pub async fn execute_rewrites(
 }
 
 /// Perform a strict global sort and atomically replace table contents.
-pub async fn commit_sorted_overwrite(table_uri: &str, cfg: &SortConfig) -> Result<()> {
+pub(crate) async fn commit_full_sorted_overwrite(
+    table_uri: &str,
+    sort_columns: &[String],
+    nulls_first: bool,
+) -> Result<()> {
     use datafusion::prelude::{col, SessionContext};
     use deltalake::kernel::{Action, Remove};
     use deltalake::protocol::{DeltaOperation, SaveMode};
@@ -405,10 +409,9 @@ pub async fn commit_sorted_overwrite(table_uri: &str, cfg: &SortConfig) -> Resul
     ctx.register_table("t", std::sync::Arc::new(table.clone()))
         .context("register delta table in DataFusion (overwrite)")?;
     let mut sql = String::from("SELECT * FROM t");
-    if !cfg.sort_columns.is_empty() {
-        let nulls = if cfg.nulls_first { "NULLS FIRST" } else { "NULLS LAST" };
-        let order = cfg
-            .sort_columns
+    if !sort_columns.is_empty() {
+        let nulls = if nulls_first { "NULLS FIRST" } else { "NULLS LAST" };
+        let order = sort_columns
             .iter()
             .map(|c| format!("\"{}\" {}", c, nulls))
             .collect::<Vec<_>>()
