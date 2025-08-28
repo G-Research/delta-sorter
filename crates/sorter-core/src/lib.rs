@@ -51,6 +51,15 @@ fn cmp_tuple_with_nulls(a: &[SortVal], b: &[SortVal], nulls_first: bool) -> std:
     a.len().cmp(&b.len())
 }
 
+/// Configuration for sorting and compaction behavior.
+///
+/// - `sort_columns`: Columns used for lexicographic ordering.
+/// - `target_file_size_bytes`: Advisory parquet file size; writer may exceed.
+/// - `predicate`: Reserved for future filtering support.
+/// - `concurrency`: Max concurrent partition rewrites.
+/// - `dry_run`: If true, plans/validates only without committing changes.
+/// - `repartition_by_sort_key`: If true, perform strict full-table sorted overwrite.
+/// - `nulls_first`: Controls NULLS FIRST/LAST behavior in ordering.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SortConfig {
     pub sort_columns: Vec<String>,
@@ -76,12 +85,14 @@ impl Default for SortConfig {
     }
 }
 
+/// A plan describing which groups (partitions) to rewrite.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RewritePlan {
     pub table_uri: String,
     pub groups: Vec<RewriteGroup>,
 }
 
+/// A single rewrite group, typically a partition, with input files and size estimates.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RewriteGroup {
     pub partition: Option<Vec<(String, String)>>,
@@ -90,6 +101,7 @@ pub struct RewriteGroup {
     pub estimated_bytes: usize,
 }
 
+/// Summary of ordering validation across table files.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ValidationReport {
     pub checked_files: usize,
@@ -97,6 +109,7 @@ pub struct ValidationReport {
     pub details_sample: Vec<String>,
 }
 
+/// Per-partition metrics emitted after a rewrite commit.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct PartitionMetrics {
     pub partition: Option<Vec<(String, String)>>,
@@ -107,6 +120,10 @@ pub struct PartitionMetrics {
     pub duration_ms: u128,
 }
 
+/// Compact small files and enforce ordering.
+///
+/// Default mode rewrites only partitions that fail ordering validation.
+/// If `cfg.repartition_by_sort_key` is true, performs a full-table sorted overwrite.
 pub async fn compact_with_global_sort(table_uri: &str, cfg: SortConfig) -> Result<()> {
     info!(table_uri, "starting compaction with global sort");
 
@@ -178,6 +195,7 @@ pub async fn compact_with_global_sort(table_uri: &str, cfg: SortConfig) -> Resul
     Ok(())
 }
 
+/// Build a partition-aware rewrite plan by validating ordering per partition.
 pub async fn plan_rewrites(table_uri: &str, cfg: &SortConfig) -> Result<RewritePlan> {
     let _ = cfg;
     let table = deltalake::open_table(table_uri)
@@ -249,6 +267,7 @@ pub async fn plan_rewrites(table_uri: &str, cfg: &SortConfig) -> Result<RewriteP
     })
 }
 
+/// Rewrite a single partition: read rows, sort by `cfg.sort_columns`, and overwrite.
 pub async fn rewrite_partition_overwrite(
     table_uri: &str,
     group: &RewriteGroup,
@@ -292,7 +311,9 @@ pub async fn rewrite_partition_overwrite(
     Ok(())
 }
 
-// Execute the plan: read batches, sort by columns, write Parquet files
+/// Execute a rewrite plan by reading, sorting, and writing new files (no commit).
+///
+/// Returns the adds and removes to be committed by the caller.
 pub async fn execute_rewrites(
     plan: &RewritePlan,
     cfg: &SortConfig,
@@ -354,6 +375,7 @@ pub async fn execute_rewrites(
     Ok((adds, removes))
 }
 
+/// Perform a strict global sort and atomically replace table contents.
 pub async fn commit_sorted_overwrite(table_uri: &str, cfg: &SortConfig) -> Result<()> {
     use datafusion::prelude::{col, SessionContext};
     use deltalake::kernel::{Action, Remove};
@@ -407,6 +429,7 @@ pub async fn commit_sorted_overwrite(table_uri: &str, cfg: &SortConfig) -> Resul
     Ok(())
 }
 
+/// Validate global ordering by checking inter-file boundaries and per-file monotonicity.
 pub async fn validate_global_order(table_uri: &str, sort_columns: &[String], nulls_first: bool) -> Result<ValidationReport> {
     let table = deltalake::open_table(table_uri).await?;
     let uris: Vec<String> = table.get_file_uris()?.collect();
