@@ -209,10 +209,6 @@ pub async fn compact_with_sort(table_uri: &str, cfg: SortConfig) -> Result<()> {
     Ok(())
 }
 
-#[deprecated(note = "renamed to compact_with_sort; behavior unchanged")]
-pub async fn compact_with_global_sort(table_uri: &str, cfg: SortConfig) -> Result<()> {
-    compact_with_sort(table_uri, cfg).await
-}
 
 /// Build a partition-aware rewrite plan by validating ordering per partition.
 pub async fn plan_rewrites(table_uri: &str, cfg: &SortConfig) -> Result<RewritePlan> {
