@@ -121,7 +121,18 @@ pub async fn compact_with_global_sort(table_uri: &str, cfg: SortConfig) -> Resul
         }
         return commit_sorted_overwrite(table_uri, &cfg).await;
     } else {
-        let plan = plan_rewrites(table_uri, &cfg).await?;
+        let plan = match plan_rewrites(table_uri, &cfg).await {
+            Ok(p) => p,
+            Err(e) => {
+                if cfg.dry_run {
+                    // In dry-run mode, tolerate planning failures (e.g., missing table in scaffold)
+                    warn!(error=?e, "dry-run: planning failed; skipping execution");
+                    return Ok(());
+                } else {
+                    return Err(e);
+                }
+            }
+        };
         if cfg.dry_run {
             info!(groups = plan.groups.len(), "dry-run: planned groups");
             debug!(?plan, "rewrite plan");

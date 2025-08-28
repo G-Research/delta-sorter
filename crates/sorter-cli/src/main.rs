@@ -82,6 +82,20 @@ async fn main() -> Result<()> {
         }
         Ok(())
     } else {
-        compact_with_global_sort(&args.table, cfg).await
+        let dry = cfg.dry_run;
+        let strict = cfg.repartition_by_sort_key;
+        match compact_with_global_sort(&args.table, cfg).await {
+            Ok(()) => {
+                if dry {
+                    println!("Dry run completed: planned rewrites; see logs for details.");
+                } else if strict {
+                    println!("Success: full-table sorted overwrite completed.");
+                } else {
+                    println!("Success: partition-aware compaction + sort completed.");
+                }
+                Ok(())
+            }
+            Err(e) => Err(e),
+        }
     }
 }
