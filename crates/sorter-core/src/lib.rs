@@ -211,7 +211,6 @@ pub async fn compact_with_global_sort(table_uri: &str, cfg: SortConfig) -> Resul
 
 /// Build a partition-aware rewrite plan by validating ordering per partition.
 pub async fn plan_rewrites(table_uri: &str, cfg: &SortConfig) -> Result<RewritePlan> {
-    let _ = cfg;
     let table = deltalake::open_table(table_uri)
         .await
         .with_context(|| format!("open_table({table_uri})"))?;
