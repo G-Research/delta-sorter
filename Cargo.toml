@@ -7,7 +7,7 @@ resolver = "2"
 exclude = ["crates/sorter-py"]
 
 [workspace.package]
-edition = "2021"
+edition = "2024"
 license = "UNLICENSED"
 
 [workspace.dependencies]
