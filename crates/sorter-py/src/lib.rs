@@ -1,7 +1,7 @@
 use once_cell::sync::OnceCell;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
-use sorter_core::{compact_with_global_sort, validate_global_order, SortConfig};
+use sorter_core::{compact_with_sort, validate_global_order, SortConfig};
 
 static RUNTIME: OnceCell<tokio::runtime::Runtime> = OnceCell::new();
 
@@ -40,7 +40,7 @@ fn compact(
         },
     };
     rt()
-        .block_on(compact_with_global_sort(&table_uri, cfg))
+        .block_on(compact_with_sort(&table_uri, cfg))
         .map_err(|e| PyRuntimeError::new_err(e.to_string()))
 }
 

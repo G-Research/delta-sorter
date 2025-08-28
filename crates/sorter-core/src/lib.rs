@@ -138,7 +138,7 @@ pub struct PartitionMetrics {
 ///
 /// Default mode rewrites only partitions that fail ordering validation.
 /// If `cfg.repartition_by_sort_key` is true, performs a full-table sorted overwrite.
-pub async fn compact_with_global_sort(table_uri: &str, cfg: SortConfig) -> Result<()> {
+pub async fn compact_with_sort(table_uri: &str, cfg: SortConfig) -> Result<()> {
     info!(table_uri, "starting compaction with global sort");
 
     if cfg.repartition_by_sort_key {
@@ -205,8 +205,13 @@ pub async fn compact_with_global_sort(table_uri: &str, cfg: SortConfig) -> Resul
         info!(partitions_processed, total_files_in, total_files_out, total_bytes_in, total_bytes_out, elapsed_ms, "rewrite run summary");
     }
 
-    info!("compaction with global sort completed");
+    info!("compaction with sort completed");
     Ok(())
+}
+
+#[deprecated(note = "renamed to compact_with_sort; behavior unchanged")]
+pub async fn compact_with_global_sort(table_uri: &str, cfg: SortConfig) -> Result<()> {
+    compact_with_sort(table_uri, cfg).await
 }
 
 /// Build a partition-aware rewrite plan by validating ordering per partition.

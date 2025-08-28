@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
-use sorter_core::{compact_with_global_sort, validate_global_order, SortConfig};
+use sorter_core::{compact_with_sort, validate_global_order, SortConfig};
 use tracing_subscriber::{fmt, EnvFilter};
 
 #[derive(Parser, Debug)]
@@ -84,7 +84,7 @@ async fn main() -> Result<()> {
     } else {
         let dry = cfg.dry_run;
         let strict = cfg.repartition_by_sort_key;
-        match compact_with_global_sort(&args.table, cfg).await {
+        match compact_with_sort(&args.table, cfg).await {
             Ok(()) => {
                 if dry {
                     println!("Dry run completed: planned rewrites; see logs for details.");

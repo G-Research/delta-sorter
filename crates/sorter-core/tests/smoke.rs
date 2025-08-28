@@ -1,4 +1,4 @@
-use sorter_core::{compact_with_global_sort, SortConfig};
+use sorter_core::{compact_with_sort, SortConfig};
 
 #[tokio::test]
 async fn dry_run_executes() {
@@ -8,7 +8,6 @@ async fn dry_run_executes() {
         ..Default::default()
     };
     // Using a non-existing table URI is fine for dry-run in current scaffold
-    let res = compact_with_global_sort("/tmp/nonexistent", cfg).await;
+    let res = compact_with_sort("/tmp/nonexistent", cfg).await;
     assert!(res.is_ok());
 }
-
