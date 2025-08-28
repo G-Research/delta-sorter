@@ -1,4 +1,4 @@
-.PHONY: help build-cli fmt lint test py-build py-dev py-test setup-py setup-maturin clean
+.PHONY: help build-cli fmt lint test test-all py-build py-dev py-test setup-py setup-maturin clean
 
 PY ?= python3
 MATURIN ?= $(PY) -m maturin
@@ -8,7 +8,8 @@ help:
 	@echo "  build-cli     - Build the Rust CLI (deltasort)"
 	@echo "  fmt           - Run cargo fmt on the workspace"
 	@echo "  lint          - Run cargo clippy with -D warnings"
-	@echo "  test          - Run Rust library tests (sorter-core)"
+	@echo "  test          - Run all Rust tests (workspace)"
+	@echo "  test-all      - Run Rust tests then Python tests"
 	@echo "  py-build      - Build the Python wheel (PyO3 via maturin)"
 	@echo "  py-dev        - Develop-install the Python native module into current env"
 	@echo "  setup-maturin - Install maturin (and patchelf on Linux)"
@@ -26,7 +27,12 @@ lint:
 	cargo clippy --workspace -- -D warnings
 
 test:
-	cargo test -p sorter-core --lib
+	cargo test --workspace
+
+# Runs Rust tests, then Python tests. Expects native module installed via `make py-dev`.
+test-all:
+	$(MAKE) test
+	$(MAKE) py-test
 
 py-build:
 	$(MATURIN) build -m crates/sorter-py/Cargo.toml

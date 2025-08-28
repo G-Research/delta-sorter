@@ -31,6 +31,7 @@ Quick commands (run from repo root):
 - `make` or `make help`: list available targets
 - `make build-cli`: build CLI (`./target/debug/deltasort`)
 - `make fmt` / `make lint` / `make test`: format, lint, and run Rust tests
+- `make test-all`: run Rust tests then Python tests
 - `make setup-maturin`: install `maturin` (and `patchelf` on Linux)
 - `make py-dev`: develop-install the native Python module via maturin
 - `make setup-py`: install Python runtime/test deps
@@ -122,8 +123,12 @@ Notes
 - Per-partition overwrite uses a schema-aware `replaceWhere`: numbers/booleans are emitted unquoted, strings are single-quoted (with escaping), and NULLs use `IS NULL`. This avoids accidental over/under-matching when committing.
 
 Behavior summary
-- Default mode: Partition-aware rewrite only — avoids full-table rewrite. Rewrites just the partitions that fail ordering validation.
-- Strict mode (`--repartition-by-sort-key`): Full-table sorted overwrite — reads all rows, writes new files, and replaces the entire table atomically. Use only when you require strict global ordering across all partitions/files.
+- Always sorts what it rewrites: In both modes, any data we rewrite is sorted lexicographically by the provided columns before writing Parquet files.
+- Default mode: Partition-aware rewrite only — avoids a full-table rewrite. It validates partitions and rewrites only those that fail ordering checks, sorting their rows by the sort key.
+- Strict mode (`--repartition-by-sort-key`): Full-table sorted overwrite — reads all rows, repartitions by the sort key, writes new files in order, and replaces the entire table atomically. Use when you require strict global ordering across all partitions/files.
+
+Clarification: “read without sorting”
+- The phrase “downstream clients can read without sorting” means consumers can scan the table in key order without issuing an extra sort at query time. It does not mean deltasort itself “mostly reads without sorting.” The tool sorts all rewritten data; only already-valid partitions are skipped to minimize work.
 
 ## Python Usage
 Install runtime deps in your environment: `pip install deltalake pandas pyarrow` (for the examples). Install the native bindings as above (maturin build/develop) so `deltasort_rs` is available.
@@ -157,6 +162,7 @@ The validator performs two checks:
 Use `--validate-only` (or `SortOptimizer.validate(...)`) to audit ordering without modifying the table. It reports the number of files checked and total violations; the Python wrapper raises on violations.
 
 ## Testing
+- Makefile: `make test-all` runs Rust tests then Python tests. Requires `make py-dev` and `make setup-py` first.
 - Rust: `cargo test -p sorter-core --lib`
 - Python:
   - `pip install pytest deltalake pandas pyarrow`
@@ -182,5 +188,3 @@ Python examples
 - Quickstart (create small table, compact, validate): `python examples/python/quickstart.py /tmp/delta_table`
 - Validate only: `python examples/python/validate_only.py /tmp/delta_table objectId,dateTime`
 - Partitioned table quickstart (partitioned by objectId): `python examples/python/partitioned_quickstart.py /tmp/delta_part_table`
-
-
