@@ -12,6 +12,8 @@ use std::path::Path as FsPath;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 use datafusion::prelude::ParquetReadOptions;
+use datafusion::logical_expr::Expr;
+use datafusion::common::Column as DFColumn;
 use deltalake::arrow::array::{Array, ArrayRef, Float32Array, Float64Array, Int32Array, Int64Array, LargeStringArray, StringArray, BooleanArray, TimestampMicrosecondArray, TimestampMillisecondArray, TimestampNanosecondArray, TimestampSecondArray};
 use deltalake::arrow::datatypes::{DataType, TimeUnit};
 
@@ -289,7 +291,7 @@ pub(crate) async fn rewrite_partition_overwrite(
     group: &RewriteGroup,
     cfg: &SortConfig,
 ) -> Result<()> {
-    use datafusion::prelude::{col, lit, Expr, SessionContext};
+    use datafusion::prelude::{col, lit, SessionContext};
     use deltalake::operations::DeltaOps;
 
     let table = deltalake::open_table(table_uri)
@@ -300,14 +302,9 @@ pub(crate) async fn rewrite_partition_overwrite(
     ctx.register_table("t", std::sync::Arc::new(table.clone()))
         .context("register delta table in DataFusion (partition)")?;
     let mut df = ctx.table("t").await.context("open DF table t (partition)")?;
-
     if let Some(parts) = &group.partition {
-        let mut pred: Option<Expr> = None;
-        for (k, v) in parts {
-            let e = col(k).eq(lit(v.clone()));
-            pred = Some(match pred { Some(p) => p.and(e), None => e });
-        }
-        if let Some(p) = pred { df = df.filter(p)?; }
+        let pred = build_partition_predicate_expr_typed(&table, parts);
+        df = df.filter(pred)?;
     }
 
     let sort_exprs = cfg
@@ -810,6 +807,59 @@ fn build_partition_predicate_sql_from_types(
         }
     }
     exprs.join(" AND ")
+}
+
+fn build_partition_predicate_expr_typed(table: &DeltaTable, parts: &[(String, String)]) -> Expr {
+    use deltalake::kernel::{DataType as KDT, PrimitiveType as KPT};
+    let schema = table.get_schema();
+    let mut type_map = std::collections::HashMap::new();
+    if let Ok(s) = schema {
+        for f in s.fields() { type_map.insert(f.name.clone(), f.data_type().clone()); }
+    }
+    build_partition_predicate_expr_from_types(&type_map, parts)
+}
+
+fn build_partition_predicate_expr_from_types(
+    type_map: &std::collections::HashMap<String, deltalake::kernel::DataType>,
+    parts: &[(String, String)],
+) -> Expr {
+    use deltalake::kernel::{DataType as KDT, PrimitiveType as KPT};
+    let mut pred: Option<Expr> = None;
+    for (k, raw) in parts {
+        let val = raw.trim_matches('"').to_string();
+        let e = if val.eq_ignore_ascii_case("null") {
+            Expr::IsNull(Box::new(Expr::Column(DFColumn { relation: None, name: k.clone() })))
+        } else {
+            match type_map.get(k) {
+                Some(KDT::Primitive(KPT::Boolean)) => {
+                    let low = val.to_ascii_lowercase();
+                    let litv = matches!(low.as_str(), "true" | "t" | "1");
+                    Expr::Column(DFColumn { relation: None, name: k.clone() }).eq(Expr::Literal(datafusion::scalar::ScalarValue::Boolean(Some(litv))))
+                }
+                Some(KDT::Primitive(KPT::Byte))
+                | Some(KDT::Primitive(KPT::Short))
+                | Some(KDT::Primitive(KPT::Integer))
+                | Some(KDT::Primitive(KPT::Long)) => {
+                    if let Ok(n) = val.parse::<i64>() {
+                        Expr::Column(DFColumn { relation: None, name: k.clone() }).eq(Expr::Literal(datafusion::scalar::ScalarValue::Int64(Some(n))))
+                    } else {
+                        Expr::Column(DFColumn { relation: None, name: k.clone() }).eq(Expr::Literal(datafusion::scalar::ScalarValue::Utf8(Some(val.clone()))))
+                    }
+                }
+                Some(KDT::Primitive(KPT::Float)) | Some(KDT::Primitive(KPT::Double)) => {
+                    if let Ok(f) = val.parse::<f64>() {
+                        Expr::Column(DFColumn { relation: None, name: k.clone() }).eq(Expr::Literal(datafusion::scalar::ScalarValue::Float64(Some(f))))
+                    } else {
+                        Expr::Column(DFColumn { relation: None, name: k.clone() }).eq(Expr::Literal(datafusion::scalar::ScalarValue::Utf8(Some(val.clone()))))
+                    }
+                }
+                // Fallbacks: compare as string literal
+                _ => Expr::Column(DFColumn { relation: None, name: k.clone() }).eq(Expr::Literal(datafusion::scalar::ScalarValue::Utf8(Some(val.clone())))),
+            }
+        };
+        pred = Some(match pred { Some(p) => p.and(e), None => e });
+    }
+    pred.unwrap_or_else(|| Expr::Literal(datafusion::scalar::ScalarValue::Boolean(Some(true))))
 }
 
 #[cfg(test)]
