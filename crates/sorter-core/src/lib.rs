@@ -408,17 +408,17 @@ pub(crate) async fn commit_full_sorted_overwrite(
     let ctx = SessionContext::new();
     ctx.register_table("t", std::sync::Arc::new(table.clone()))
         .context("register delta table in DataFusion (overwrite)")?;
-    let mut sql = String::from("SELECT * FROM t");
+    // Build DataFrame from table and apply sort via expressions
+    use datafusion::common::Column as DFColumn;
+    use datafusion::logical_expr::Expr;
+    let mut df = ctx.table("t").await?;
     if !sort_columns.is_empty() {
-        let nulls = if nulls_first { "NULLS FIRST" } else { "NULLS LAST" };
-        let order = sort_columns
+        let sort_exprs = sort_columns
             .iter()
-            .map(|c| format!("\"{}\" {}", c, nulls))
-            .collect::<Vec<_>>()
-            .join(",");
-        sql.push_str(&format!(" ORDER BY {}", order));
+            .map(|c| Expr::Column(DFColumn { relation: Some("t".into()), name: c.clone() }).sort(true, nulls_first))
+            .collect::<Vec<_>>();
+        df = df.sort(sort_exprs)?;
     }
-    let df = ctx.sql(&sql).await?;
 
     let plan = df.create_physical_plan().await?;
 
@@ -671,17 +671,17 @@ pub async fn rewrite_partition_tx(
         sql.push_str(" WHERE ");
         sql.push_str(&build_partition_predicate_sql_typed(&table, parts));
     }
+    let mut df = ctx.sql(&sql).await?;
     if !cfg.sort_columns.is_empty() {
-        let nulls = if cfg.nulls_first { "NULLS FIRST" } else { "NULLS LAST" };
-        let order = cfg
+        use datafusion::logical_expr::Expr;
+        use datafusion::common::Column as DFColumn;
+        let sort_exprs = cfg
             .sort_columns
             .iter()
-            .map(|c| format!("\"{}\" {}", c, nulls))
-            .collect::<Vec<_>>()
-            .join(",");
-        sql.push_str(&format!(" ORDER BY {}", order));
+            .map(|c| Expr::Column(DFColumn { relation: None, name: c.clone() }).sort(true, cfg.nulls_first))
+            .collect::<Vec<_>>();
+        df = df.sort(sort_exprs)?;
     }
-    let df = ctx.sql(&sql).await?;
 
     let mut stream = df.execute_stream().await?;
     let mut rb_writer = deltalake::writer::RecordBatchWriter::for_table(&table)?;
