@@ -3,7 +3,7 @@ from deltasort_rs import compact as rs_compact, validate as rs_validate  # type:
 
 
 class SortOptimizer:
-    def __init__(self, table_uri: str, bin_name: str = "deltasort"):
+    def __init__(self, table_uri: str):
         self.table_uri = table_uri
 
     def compact(
