@@ -1,5 +1,5 @@
 from typing import List, Optional
-from deltasort_rs import compact as rs_compact, validate as rs_validate  # type: ignore
+from deltasort_rs import compact as rs_compact, validate as rs_validate
 
 
 class SortOptimizer:
