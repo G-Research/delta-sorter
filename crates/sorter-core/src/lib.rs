@@ -160,7 +160,11 @@ pub async fn compact_with_sort(table_uri: &str, cfg: SortConfig) -> Result<()> {
             Ok(p) => p,
             Err(e) => {
                 if cfg.dry_run {
-                    // In dry-run mode, tolerate planning failures (e.g., missing table in scaffold)
+                    let msg = format!("{}", e);
+                    if msg.contains("missing sort columns") {
+                        return Err(e);
+                    }
+                    // In dry-run mode, tolerate other planning failures (e.g., missing table in scaffold)
                     warn!(error=?e, "dry-run: planning failed; skipping execution");
                     return Ok(());
                 } else {
@@ -220,15 +224,7 @@ pub(crate) async fn plan_rewrites(table_uri: &str, cfg: &SortConfig) -> Result<R
         .await
         .with_context(|| format!("open_table({table_uri})"))?;
 
-    if let Ok(schema) = table.get_schema() {
-        let field_names: std::collections::HashSet<&str> =
-            schema.fields().map(|f| f.name.as_str()).collect();
-        for col in &cfg.sort_columns {
-            if !field_names.contains(col.as_str()) {
-                warn!(column = col, "sort column not found in schema");
-            }
-        }
-    }
+    validate_sort_columns(&table, &cfg.sort_columns)?;
 
     use std::collections::BTreeMap;
     let mut by_partition: BTreeMap<String, RewriteGroup> = BTreeMap::new();
@@ -403,6 +399,9 @@ pub(crate) async fn commit_full_sorted_overwrite(
         .await
         .with_context(|| format!("open_table({table_uri}) for overwrite"))?;
 
+    // Validate sort columns exist before planning
+    validate_sort_columns(&table, sort_columns)?;
+
     let start = std::time::Instant::now();
     let ctx = SessionContext::new();
     ctx.register_table("t", std::sync::Arc::new(table.clone()))
@@ -531,6 +530,26 @@ async fn partition_is_sorted(
     if entries.is_empty() { return Ok(true); }
     let (violations, _details) = count_boundary_violations(entries, true);
     Ok(violations == 0)
+}
+
+fn validate_sort_columns(table: &DeltaTable, cols: &[String]) -> Result<()> {
+    let schema = table.get_schema()?;
+    let field_names: std::collections::HashSet<&str> =
+        schema.fields().map(|f| f.name.as_str()).collect();
+    let missing: Vec<String> = cols
+        .iter()
+        .filter(|c| !field_names.contains(c.as_str()))
+        .cloned()
+        .collect();
+    if !missing.is_empty() {
+        let mut valid: Vec<String> = schema.fields().map(|f| f.name.clone()).collect();
+        valid.sort();
+        return Err(anyhow!(
+            "missing sort columns: {:?}. Valid fields: {:?}",
+            missing, valid
+        ));
+    }
+    Ok(())
 }
 
 fn count_boundary_violations(
