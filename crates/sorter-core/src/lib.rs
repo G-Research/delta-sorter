@@ -469,7 +469,14 @@ pub async fn validate_global_order(table_uri: &str, sort_columns: &[String], nul
     let (boundary_violations, mut boundary_details) = count_boundary_violations(entries, nulls_first);
     violations += boundary_violations;
     details.append(&mut boundary_details);
-    details.truncate(20);
+    // Cap sample size but signal if more were omitted
+    let max_sample = 20usize;
+    let total = details.len();
+    if total > max_sample {
+        let extra = total - (max_sample - 1);
+        details.truncate(max_sample - 1);
+        details.push(format!("... plus {} more violations", extra));
+    }
     Ok(ValidationReport { checked_files: checked, boundary_violations: violations, details_sample: details })
 }
 
