@@ -1,4 +1,5 @@
-from typing import List, Optional
+from __future__ import annotations
+from typing import Optional
 from deltasort_rs import compact as rs_compact, validate as rs_validate
 
 
@@ -8,7 +9,7 @@ class SortOptimizer:
 
     def compact(
         self,
-        sort_columns: List[str],
+        sort_columns: list[str],
         target_file_size_bytes: Optional[int] = None,
         predicate: Optional[str] = None,
         concurrency: int = 8,
@@ -27,7 +28,7 @@ class SortOptimizer:
             nulls=nulls,
         )
 
-    def validate(self, sort_columns: List[str], nulls: str = "first") -> None:
+    def validate(self, sort_columns: list[str], nulls: str = "first") -> None:
         """Run ordering validation and raise if violations are found."""
         # rs_validate returns a dict with validator report; raise if violations
         rep = rs_validate(self.table_uri, list(sort_columns), nulls)
