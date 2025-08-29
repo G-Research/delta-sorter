@@ -178,31 +178,32 @@ pub async fn compact_with_sort(table_uri: &str, cfg: SortConfig) -> Result<()> {
             return Ok(());
         }
 
-        
-        let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(cfg.concurrency.max(1)));
-        let mut handles = futures::stream::FuturesUnordered::new();
         let start_all = std::time::Instant::now();
         let mut total_files_in: usize = 0;
         let mut total_files_out: usize = 0;
         let mut total_bytes_in: i64 = 0;
         let mut total_bytes_out: i64 = 0;
         let mut partitions_processed: usize = 0;
-        for group in plan.groups {
-            let permit = sem.clone().acquire_owned().await.unwrap();
-            let g = group.clone();
-            let table_uri = table_uri.to_string();
-            let cfg = cfg.clone();
-            handles.push(tokio::spawn(async move {
-                let _p = permit;
-                let res = rewrite_partition_tx(&table_uri, &g, &cfg).await;
-                if let Err(ref e) = res {
-                    warn!(error=?e, partition=?g.partition, "partition rewrite failed");
+
+        use futures::stream;
+        let results: Vec<Result<PartitionMetrics>> = stream::iter(plan.groups.into_iter())
+            .map(|g| {
+                let table_uri = table_uri.to_string();
+                let cfg = cfg.clone();
+                async move {
+                    let res = rewrite_partition_tx(&table_uri, &g, &cfg).await;
+                    if let Err(ref e) = res {
+                        warn!(error=?e, partition=?g.partition, "partition rewrite failed");
+                    }
+                    res
                 }
-                res
-            }));
-        }
-        while let Some(res) = handles.next().await {
-            let metrics = res??;
+            })
+            .buffer_unordered(cfg.concurrency.max(1))
+            .collect()
+            .await;
+
+        for res in results {
+            let metrics = res?;
             total_files_in += metrics.files_in;
             total_files_out += metrics.files_out;
             total_bytes_in += metrics.bytes_in;
