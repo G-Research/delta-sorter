@@ -59,6 +59,7 @@ fn cmp_sort_val_with_nulls(a: &SortVal, b: &SortVal, nulls_first: bool) -> std::
 
 fn cmp_tuple_with_nulls(a: &[SortVal], b: &[SortVal], nulls_first: bool) -> std::cmp::Ordering {
     use std::cmp::Ordering::*;
+    debug_assert_eq!(a.len(), b.len(), "tuple length mismatch: {:?} vs {:?}", a.len(), b.len());
     for (va, vb) in a.iter().zip(b.iter()) {
         let ord = cmp_sort_val_with_nulls(va, vb, nulls_first);
         if ord != Equal { return ord; }
@@ -575,11 +576,11 @@ async fn minmax_for_uri(
             }
             match &min_tuple {
                 None => min_tuple = Some(t.clone()),
-                Some(current) => { if cmp_tuple(&t, current).is_lt() { min_tuple = Some(t.clone()); } }
+                Some(current) => { if cmp_tuple_with_nulls(&t, current, true).is_lt() { min_tuple = Some(t.clone()); } }
             }
             match &max_tuple {
                 None => max_tuple = Some(t.clone()),
-                Some(current) => { if cmp_tuple(&t, current).is_gt() { max_tuple = Some(t); } }
+                Some(current) => { if cmp_tuple_with_nulls(&t, current, true).is_gt() { max_tuple = Some(t); } }
             }
         }
     }
@@ -637,16 +638,6 @@ fn arrow_value_to_sortval(arr: ArrayRef, idx: usize) -> SortVal {
         }
         _ => SortVal::Other(format!("{arr:?}")),
     }
-}
-
-
-fn cmp_tuple(a: &[SortVal], b: &[SortVal]) -> std::cmp::Ordering {
-    use std::cmp::Ordering::*;
-    for (va, vb) in a.iter().zip(b.iter()) {
-        let ord = cmp_sort_val_with_nulls(va, vb, true);
-        if ord != Equal { return ord; }
-    }
-    a.len().cmp(&b.len())
 }
 
 pub async fn rewrite_partition_tx(
