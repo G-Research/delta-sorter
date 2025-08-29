@@ -103,14 +103,14 @@ impl Default for SortConfig {
 
 /// A plan describing which groups (partitions) to rewrite.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct RewritePlan {
+pub(crate) struct RewritePlan {
     pub table_uri: String,
     pub groups: Vec<RewriteGroup>,
 }
 
 /// A single rewrite group, typically a partition, with input files and size estimates.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct RewriteGroup {
+pub(crate) struct RewriteGroup {
     pub partition: Option<Vec<(String, String)>>,
     pub input_files: Vec<String>,
     pub estimated_rows: usize,
@@ -127,7 +127,7 @@ pub struct ValidationReport {
 
 /// Per-partition metrics emitted after a rewrite commit.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct PartitionMetrics {
+struct PartitionMetrics {
     pub partition: Option<Vec<(String, String)>>,
     pub files_in: usize,
     pub files_out: usize,
@@ -213,7 +213,7 @@ pub async fn compact_with_sort(table_uri: &str, cfg: SortConfig) -> Result<()> {
 
 
 /// Build a partition-aware rewrite plan by validating ordering per partition.
-pub async fn plan_rewrites(table_uri: &str, cfg: &SortConfig) -> Result<RewritePlan> {
+pub(crate) async fn plan_rewrites(table_uri: &str, cfg: &SortConfig) -> Result<RewritePlan> {
     let table = deltalake::open_table(table_uri)
         .await
         .with_context(|| format!("open_table({table_uri})"))?;
@@ -284,7 +284,7 @@ pub async fn plan_rewrites(table_uri: &str, cfg: &SortConfig) -> Result<RewriteP
 }
 
 /// Rewrite a single partition: read rows, sort by `cfg.sort_columns`, and overwrite.
-pub async fn rewrite_partition_overwrite(
+pub(crate) async fn rewrite_partition_overwrite(
     table_uri: &str,
     group: &RewriteGroup,
     cfg: &SortConfig,
@@ -330,7 +330,7 @@ pub async fn rewrite_partition_overwrite(
 /// Execute a rewrite plan by reading, sorting, and writing new files (no commit).
 ///
 /// Returns the adds and removes to be committed by the caller.
-pub async fn execute_rewrites(
+pub(crate) async fn execute_rewrites(
     plan: &RewritePlan,
     cfg: &SortConfig,
 ) -> Result<(Vec<deltalake::kernel::Add>, Vec<deltalake::kernel::Remove>)> {
@@ -640,7 +640,7 @@ fn arrow_value_to_sortval(arr: ArrayRef, idx: usize) -> SortVal {
     }
 }
 
-pub async fn rewrite_partition_tx(
+pub(crate) async fn rewrite_partition_tx(
     table_uri: &str,
     group: &RewriteGroup,
     cfg: &SortConfig,
