@@ -548,7 +548,7 @@ fn count_boundary_violations(
     (violations, details)
 }
 
-// stats-based extraction removed in favor of per-file sampling
+
 
 async fn minmax_for_uri(
     ctx: &datafusion::prelude::SessionContext,
