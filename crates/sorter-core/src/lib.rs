@@ -3,6 +3,7 @@ use deltalake::kernel::Action;
 use deltalake::kernel::scalars::ScalarExt;
 use deltalake::protocol::DeltaOperation;
 use deltalake::writer::DeltaWriter;
+use num_traits::float::TotalOrder;
 use deltalake::{DeltaTable, DeltaTableError};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -39,7 +40,7 @@ fn cmp_sort_val_with_nulls(a: &SortVal, b: &SortVal, nulls_first: bool) -> std::
         (_, SortVal::Null) => if nulls_first { Greater } else { Less },
         (SortVal::Bool(x), SortVal::Bool(y)) => x.cmp(y),
         (SortVal::Int(x), SortVal::Int(y)) => x.cmp(y),
-        (SortVal::Float(x), SortVal::Float(y)) => x.partial_cmp(y).unwrap_or(Equal),
+        (SortVal::Float(x), SortVal::Float(y)) => x.total_cmp(y),
         (SortVal::Ts(x), SortVal::Ts(y)) => x.cmp(y),
         (SortVal::Str(x), SortVal::Str(y)) => x.cmp(y),
         // Mismatched non-NULL types: should not occur with a consistent schema.
