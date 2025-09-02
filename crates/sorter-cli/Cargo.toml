@@ -1,0 +1,16 @@
+[package]
+name = "sorter-cli"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+clap = { version = "4", features = ["derive"] }
+sorter-core = { path = "../sorter-core" }
+
+[[bin]]
+name = "deltasort"
+path = "src/main.rs"
