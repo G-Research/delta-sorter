@@ -2,9 +2,9 @@
 members = [
     "crates/sorter-core",
     "crates/sorter-cli",
+    "python"
 ]
 resolver = "2"
-exclude = ["crates/sorter-py"]
 
 [workspace.package]
 edition = "2024"
