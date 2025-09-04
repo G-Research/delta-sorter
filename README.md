@@ -11,8 +11,7 @@ Compaction and global lexicographic ordering for Delta Lake tables, built on del
 ## Components
 - `crates/sorter-core`: core library for planning, rewriting, committing, and validating.
 - `crates/sorter-cli`: CLI `deltasort` wrapping the core library.
-- `crates/sorter-py`: native Python module (PyO3) exposing sorter-core to Python as `deltasort_rs`.
-- `python/deltasort`: thin Python wrapper that calls the native module.
+- `python/`: native Python module (PyO3) exposing sorter-core to Python as `deltasort_rs`, with thin Python wrapper that calls the native module.
 
 ## Install / Build
 Use one of the following workflows (equivalent):
@@ -66,8 +65,8 @@ Build CLI (optional)
 
 Python native bindings (PyO3)
 - Install maturin: `pip install maturin` (Linux users may prefer `pip install "maturin[patchelf]"`)
-- Build wheel: `python -m maturin build -m crates/sorter-py/Cargo.toml`
-- Dev install into current env: `python -m maturin develop -m crates/sorter-py/Cargo.toml`
+- Build wheel: `python -m maturin build -m python/Cargo.toml`
+- Dev install into current env: `python -m maturin develop -m python/Cargo.toml`
 - Verify: `python -c "import deltasort_rs; print('ok')"`
 
 ## CLI Usage

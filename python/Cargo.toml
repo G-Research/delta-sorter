@@ -5,11 +5,11 @@ edition = "2024"
 publish = false
 
 [lib]
-name = "deltasort_rs"
+name = "deltasort"
 crate-type = ["cdylib"]
 
 [dependencies]
 pyo3 = { version = "0.22", features = ["extension-module"] }
 once_cell = "1"
-sorter-core = { path = "../sorter-core" }
+sorter-core = { path = "../crates/sorter-core" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

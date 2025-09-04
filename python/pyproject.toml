@@ -3,10 +3,10 @@ requires = ["maturin>=1.4,<2"]
 build-backend = "maturin"
 
 [project]
-name = "deltasort-rs"
+name = "deltasort"
 version = "0.1.0"
 description = "Delta Lake compaction + global sort (Rust, PyO3)"
-readme = "../../README.md"
+readme = "../README.md"
 requires-python = ">=3.8"
 authors = [{ name = "Codex Team" }]
 classifiers = [
@@ -18,5 +18,6 @@ classifiers = [
 
 [tool.maturin]
 bindings = "pyo3"
-module-name = "deltasort_rs"
+module-name = "deltasort"
+python-source = "pysrc"
 # manylinux = "2_35"  # uncomment to pin manylinux tag if needed

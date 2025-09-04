@@ -35,10 +35,10 @@ test-all:
 	$(MAKE) py-test
 
 py-build:
-	$(MATURIN) build -m crates/sorter-py/Cargo.toml
+	$(MATURIN) build -m python/Cargo.toml
 
 py-dev:
-	$(MATURIN) develop -m crates/sorter-py/Cargo.toml
+	$(MATURIN) develop -m python/Cargo.toml
 
 setup-maturin:
 	$(PY) -m pip install -U "maturin[patchelf]"
@@ -46,7 +46,7 @@ setup-maturin:
 setup-py:
 	$(PY) -m pip install -U pytest deltalake pandas pyarrow
 
-py-test:
+py-test: py-dev
 	pytest -q python/tests
 
 clean:

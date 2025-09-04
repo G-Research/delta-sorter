@@ -39,20 +39,27 @@ fn compact(
             _ => true,
         },
     };
-    rt()
-        .block_on(compact_with_sort(&table_uri, cfg))
+    rt().block_on(compact_with_sort(&table_uri, cfg))
         .map_err(|e| PyRuntimeError::new_err(e.to_string()))
 }
 
 #[pyfunction]
 #[pyo3(signature = (table_uri, sort_columns, nulls=None))]
-fn validate(table_uri: String, sort_columns: Vec<String>, nulls: Option<String>) -> PyResult<PyObject> {
+fn validate(
+    table_uri: String,
+    sort_columns: Vec<String>,
+    nulls: Option<String>,
+) -> PyResult<PyObject> {
     let nulls_first = match nulls.as_deref() {
         Some("last") => false,
         _ => true,
     };
     let report = rt()
-        .block_on(validate_global_order(&table_uri, &sort_columns, nulls_first))
+        .block_on(validate_global_order(
+            &table_uri,
+            &sort_columns,
+            nulls_first,
+        ))
         .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
     Python::with_gil(|py| {
         let d = pyo3::types::PyDict::new_bound(py);
@@ -64,7 +71,7 @@ fn validate(table_uri: String, sort_columns: Vec<String>, nulls: Option<String>)
 }
 
 #[pymodule]
-fn deltasort_rs(_py: Python, m: &Bound<PyModule>) -> PyResult<()> {
+fn deltasort(_py: Python, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(compact, m)?)?;
     m.add_function(wrap_pyfunction!(validate, m)?)?;
     Ok(())
