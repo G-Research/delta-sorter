@@ -1,6 +1,8 @@
 from __future__ import annotations
+
 from typing import Optional
-from deltasort_rs import compact as rs_compact, validate as rs_validate
+
+from .deltasort import compact as rs_compact, validate as rs_validate
 
 
 class SortOptimizer:
