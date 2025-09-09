@@ -1,6 +1,7 @@
 use once_cell::sync::OnceCell;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 use sorter_core::{compact_with_sort, validate_global_order, SortConfig};
 
 static RUNTIME: OnceCell<tokio::runtime::Runtime> = OnceCell::new();
@@ -18,6 +19,7 @@ fn rt() -> &'static tokio::runtime::Runtime {
 #[pyfunction]
 #[pyo3(signature = (table_uri, sort_columns, target_file_size_bytes=None, predicate=None, concurrency=None, dry_run=None, repartition_by_sort_key=None, nulls=None))]
 fn compact(
+    py: Python<'_>,
     table_uri: String,
     sort_columns: Vec<String>,
     target_file_size_bytes: Option<usize>,
@@ -39,35 +41,36 @@ fn compact(
             _ => true,
         },
     };
-    rt().block_on(compact_with_sort(&table_uri, cfg))
+    Python::detach(py, || rt().block_on(compact_with_sort(&table_uri, cfg)))
         .map_err(|e| PyRuntimeError::new_err(e.to_string()))
 }
 
 #[pyfunction]
 #[pyo3(signature = (table_uri, sort_columns, nulls=None))]
 fn validate(
+    py: Python<'_>,
     table_uri: String,
     sort_columns: Vec<String>,
     nulls: Option<String>,
-) -> PyResult<PyObject> {
+) -> PyResult<Bound<PyDict>> {
     let nulls_first = match nulls.as_deref() {
         Some("last") => false,
         _ => true,
     };
-    let report = rt()
-        .block_on(validate_global_order(
+    let report = Python::detach(py, || {
+        rt().block_on(validate_global_order(
             &table_uri,
             &sort_columns,
             nulls_first,
         ))
-        .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-    Python::with_gil(|py| {
-        let d = pyo3::types::PyDict::new_bound(py);
-        d.set_item("checked_files", report.checked_files)?;
-        d.set_item("boundary_violations", report.boundary_violations)?;
-        d.set_item("details_sample", report.details_sample)?;
-        Ok(d.into_py(py))
     })
+    .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+
+    let d = pyo3::types::PyDict::new(py);
+    d.set_item("checked_files", report.checked_files)?;
+    d.set_item("boundary_violations", report.boundary_violations)?;
+    d.set_item("details_sample", report.details_sample)?;
+    Ok(d)
 }
 
 #[pymodule]
