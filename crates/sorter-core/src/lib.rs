@@ -314,6 +314,7 @@ pub(crate) async fn plan_rewrites(table_uri: &str, cfg: &SortConfig) -> Result<R
 }
 
 /// Rewrite a single partition: read rows, sort by `cfg.sort_columns`, and overwrite.
+#[allow(unused)]
 pub(crate) async fn rewrite_partition_overwrite(
     table_uri: &str,
     group: &RewriteGroup,
@@ -358,6 +359,7 @@ pub(crate) async fn rewrite_partition_overwrite(
 /// Execute a rewrite plan by reading, sorting, and writing new files (no commit).
 ///
 /// Returns the adds and removes to be committed by the caller.
+#[allow(unused)]
 pub(crate) async fn execute_rewrites(
     plan: &RewritePlan,
     cfg: &SortConfig,
@@ -471,8 +473,6 @@ pub(crate) async fn commit_full_sorted_overwrite(
     }
 
     let files_in = removes.len();
-    let files_out = 0usize;
-    let bytes_out: i64 = 0;
 
     let _updated =
         deltalake::operations::write::WriteBuilder::new(table.log_store().clone(), table.state)
