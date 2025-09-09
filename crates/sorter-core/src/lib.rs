@@ -1,21 +1,25 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
+use datafusion::common::Column as DFColumn;
+use datafusion::logical_expr::Expr;
+use datafusion::prelude::ParquetReadOptions;
+use deltalake::arrow::array::{
+    Array, ArrayRef, BooleanArray, Float32Array, Float64Array, Int32Array, Int64Array,
+    LargeStringArray, StringArray, TimestampMicrosecondArray, TimestampMillisecondArray,
+    TimestampNanosecondArray, TimestampSecondArray,
+};
+use deltalake::arrow::datatypes::{DataType, TimeUnit};
 use deltalake::kernel::Action;
 use deltalake::kernel::scalars::ScalarExt;
 use deltalake::protocol::DeltaOperation;
 use deltalake::writer::DeltaWriter;
-use num_traits::float::TotalOrder;
 use deltalake::{DeltaTable, DeltaTableError};
 use futures::StreamExt;
+use num_traits::float::TotalOrder;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::path::Path as FsPath;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
-use datafusion::prelude::ParquetReadOptions;
-use datafusion::logical_expr::Expr;
-use datafusion::common::Column as DFColumn;
-use deltalake::arrow::array::{Array, ArrayRef, Float32Array, Float64Array, Int32Array, Int64Array, LargeStringArray, StringArray, BooleanArray, TimestampMicrosecondArray, TimestampMillisecondArray, TimestampNanosecondArray, TimestampSecondArray};
-use deltalake::arrow::datatypes::{DataType, TimeUnit};
 
 #[derive(Clone, Debug)]
 enum SortVal {
@@ -38,8 +42,20 @@ fn cmp_sort_val_with_nulls(a: &SortVal, b: &SortVal, nulls_first: bool) -> std::
     use std::cmp::Ordering::*;
     match (a, b) {
         (SortVal::Null, SortVal::Null) => Equal,
-        (SortVal::Null, _) => if nulls_first { Less } else { Greater },
-        (_, SortVal::Null) => if nulls_first { Greater } else { Less },
+        (SortVal::Null, _) => {
+            if nulls_first {
+                Less
+            } else {
+                Greater
+            }
+        }
+        (_, SortVal::Null) => {
+            if nulls_first {
+                Greater
+            } else {
+                Less
+            }
+        }
         (SortVal::Bool(x), SortVal::Bool(y)) => x.cmp(y),
         (SortVal::Int(x), SortVal::Int(y)) => x.cmp(y),
         (SortVal::Float(x), SortVal::Float(y)) => x.total_cmp(y),
@@ -55,16 +71,24 @@ fn cmp_sort_val_with_nulls(a: &SortVal, b: &SortVal, nulls_first: bool) -> std::
                 by
             );
             format!("{:?}", ax).cmp(&format!("{:?}", by))
-        },
+        }
     }
 }
 
 fn cmp_tuple_with_nulls(a: &[SortVal], b: &[SortVal], nulls_first: bool) -> std::cmp::Ordering {
     use std::cmp::Ordering::*;
-    debug_assert_eq!(a.len(), b.len(), "tuple length mismatch: {:?} vs {:?}", a.len(), b.len());
+    debug_assert_eq!(
+        a.len(),
+        b.len(),
+        "tuple length mismatch: {:?} vs {:?}",
+        a.len(),
+        b.len()
+    );
     for (va, vb) in a.iter().zip(b.iter()) {
         let ord = cmp_sort_val_with_nulls(va, vb, nulls_first);
-        if ord != Equal { return ord; }
+        if ord != Equal {
+            return ord;
+        }
     }
     a.len().cmp(&b.len())
 }
@@ -211,13 +235,20 @@ pub async fn compact_with_sort(table_uri: &str, cfg: SortConfig) -> Result<()> {
             partitions_processed += 1;
         }
         let elapsed_ms = start_all.elapsed().as_millis();
-        info!(partitions_processed, total_files_in, total_files_out, total_bytes_in, total_bytes_out, elapsed_ms, "rewrite run summary");
+        info!(
+            partitions_processed,
+            total_files_in,
+            total_files_out,
+            total_bytes_in,
+            total_bytes_out,
+            elapsed_ms,
+            "rewrite run summary"
+        );
     }
 
     info!("compaction with sort completed");
     Ok(())
 }
-
 
 /// Build a partition-aware rewrite plan by validating ordering per partition.
 pub(crate) async fn plan_rewrites(table_uri: &str, cfg: &SortConfig) -> Result<RewritePlan> {
@@ -250,7 +281,11 @@ pub(crate) async fn plan_rewrites(table_uri: &str, cfg: &SortConfig) -> Result<R
         };
 
         let entry = by_partition.entry(key).or_insert_with(|| RewriteGroup {
-            partition: if parts_vec.is_empty() { None } else { Some(parts_vec.clone()) },
+            partition: if parts_vec.is_empty() {
+                None
+            } else {
+                Some(parts_vec.clone())
+            },
             input_files: Vec::new(),
             estimated_rows: 0,
             estimated_bytes: 0,
@@ -288,7 +323,7 @@ pub(crate) async fn rewrite_partition_overwrite(
     group: &RewriteGroup,
     cfg: &SortConfig,
 ) -> Result<()> {
-    use datafusion::prelude::{col, lit, SessionContext};
+    use datafusion::prelude::{SessionContext, col, lit};
     use deltalake::operations::DeltaOps;
 
     let table = deltalake::open_table(table_uri)
@@ -298,7 +333,10 @@ pub(crate) async fn rewrite_partition_overwrite(
     let ctx = SessionContext::new();
     ctx.register_table("t", std::sync::Arc::new(table.clone()))
         .context("register delta table in DataFusion (partition)")?;
-    let mut df = ctx.table("t").await.context("open DF table t (partition)")?;
+    let mut df = ctx
+        .table("t")
+        .await
+        .context("open DF table t (partition)")?;
     if let Some(parts) = &group.partition {
         let pred = build_partition_predicate_expr_typed(&table, parts);
         df = df.filter(pred)?;
@@ -328,7 +366,7 @@ pub(crate) async fn execute_rewrites(
     plan: &RewritePlan,
     cfg: &SortConfig,
 ) -> Result<(Vec<deltalake::kernel::Add>, Vec<deltalake::kernel::Remove>)> {
-    use datafusion::prelude::{col, SessionContext};
+    use datafusion::prelude::{SessionContext, col};
     use deltalake::writer::RecordBatchWriter;
     use futures::StreamExt;
 
@@ -360,8 +398,7 @@ pub(crate) async fn execute_rewrites(
 
     let mut stream = df.execute_stream().await.context("execute DF stream")?;
 
-    let mut writer = RecordBatchWriter::for_table(&table)
-        .map_err(|e| anyhow!(e))?;
+    let mut writer = RecordBatchWriter::for_table(&table).map_err(|e| anyhow!(e))?;
 
     while let Some(batch) = stream.next().await.transpose().context("next batch")? {
         writer.write(batch).await.map_err(|e| anyhow!(e))?;
@@ -391,10 +428,10 @@ pub(crate) async fn commit_full_sorted_overwrite(
     sort_columns: &[String],
     nulls_first: bool,
 ) -> Result<()> {
-    use datafusion::prelude::{col, SessionContext};
+    use datafusion::prelude::{SessionContext, col};
     use deltalake::kernel::{Action, Remove};
-    use deltalake::protocol::{DeltaOperation, SaveMode};
     use deltalake::operations::transaction::CommitBuilder;
+    use deltalake::protocol::{DeltaOperation, SaveMode};
 
     let mut table = deltalake::open_table(table_uri)
         .await
@@ -414,7 +451,13 @@ pub(crate) async fn commit_full_sorted_overwrite(
     if !sort_columns.is_empty() {
         let sort_exprs = sort_columns
             .iter()
-            .map(|c| Expr::Column(DFColumn { relation: Some("t".into()), name: c.clone() }).sort(true, nulls_first))
+            .map(|c| {
+                Expr::Column(DFColumn {
+                    relation: Some("t".into()),
+                    name: c.clone(),
+                })
+                .sort(true, nulls_first)
+            })
             .collect::<Vec<_>>();
         df = df.sort(sort_exprs)?;
     }
@@ -435,18 +478,26 @@ pub(crate) async fn commit_full_sorted_overwrite(
     let files_out = 0usize;
     let bytes_out: i64 = 0;
 
-    let _updated = deltalake::operations::write::WriteBuilder::new(table.log_store().clone(), table.state)
-        .with_input_execution_plan(plan)
-        .with_input_session_state(ctx.state())
-        .with_save_mode(SaveMode::Overwrite)
-        .await?;
+    let _updated =
+        deltalake::operations::write::WriteBuilder::new(table.log_store().clone(), table.state)
+            .with_input_execution_plan(plan)
+            .with_input_session_state(ctx.state())
+            .with_save_mode(SaveMode::Overwrite)
+            .await?;
     let duration_ms = start.elapsed().as_millis();
-    info!(files_in, bytes_in, duration_ms, "full-table sorted overwrite committed");
+    info!(
+        files_in,
+        bytes_in, duration_ms, "full-table sorted overwrite committed"
+    );
     Ok(())
 }
 
 /// Validate global ordering by checking inter-file boundaries and per-file monotonicity.
-pub async fn validate_global_order(table_uri: &str, sort_columns: &[String], nulls_first: bool) -> Result<ValidationReport> {
+pub async fn validate_global_order(
+    table_uri: &str,
+    sort_columns: &[String],
+    nulls_first: bool,
+) -> Result<ValidationReport> {
     let table = deltalake::open_table(table_uri).await?;
     let uris: Vec<String> = table.get_file_uris()?.collect();
     let ctx = datafusion::prelude::SessionContext::new();
@@ -463,7 +514,8 @@ pub async fn validate_global_order(table_uri: &str, sort_columns: &[String], nul
         }
     }
     let checked = entries.len();
-    let (boundary_violations, mut boundary_details) = count_boundary_violations(entries, nulls_first);
+    let (boundary_violations, mut boundary_details) =
+        count_boundary_violations(entries, nulls_first);
     violations += boundary_violations;
     details.append(&mut boundary_details);
     // Cap sample size but signal if more were omitted
@@ -474,7 +526,11 @@ pub async fn validate_global_order(table_uri: &str, sort_columns: &[String], nul
         details.truncate(max_sample - 1);
         details.push(format!("... plus {} more violations", extra));
     }
-    Ok(ValidationReport { checked_files: checked, boundary_violations: violations, details_sample: details })
+    Ok(ValidationReport {
+        checked_files: checked,
+        boundary_violations: violations,
+        details_sample: details,
+    })
 }
 
 async fn file_is_monotonic(
@@ -483,10 +539,16 @@ async fn file_is_monotonic(
     cols: &[String],
     nulls_first: bool,
 ) -> Result<bool> {
-    if cols.is_empty() { return Ok(true); }
-    let df = ctx.read_parquet(vec![uri.to_string()], ParquetReadOptions::default()).await?;
+    if cols.is_empty() {
+        return Ok(true);
+    }
+    let df = ctx
+        .read_parquet(vec![uri.to_string()], ParquetReadOptions::default())
+        .await?;
     let batches = df.collect().await?;
-    if batches.is_empty() { return Ok(true); }
+    if batches.is_empty() {
+        return Ok(true);
+    }
     let schema = batches[0].schema();
     let mut indices: Vec<usize> = Vec::with_capacity(cols.len());
     for c in cols {
@@ -502,7 +564,9 @@ async fn file_is_monotonic(
                 t.push(arrow_value_to_sortval(batch.column(i).clone(), r));
             }
             if let Some(p) = &prev {
-                if cmp_tuple_with_nulls(&t, p, nulls_first).is_lt() { return Ok(false); }
+                if cmp_tuple_with_nulls(&t, p, nulls_first).is_lt() {
+                    return Ok(false);
+                }
             }
             prev = Some(t);
         }
@@ -528,7 +592,9 @@ async fn partition_is_sorted(
             entries.push((uri, mins, maxs));
         }
     }
-    if entries.is_empty() { return Ok(true); }
+    if entries.is_empty() {
+        return Ok(true);
+    }
     let (violations, _details) = count_boundary_violations(entries, true);
     Ok(violations == 0)
 }
@@ -547,7 +613,8 @@ fn validate_sort_columns(table: &DeltaTable, cols: &[String]) -> Result<()> {
         valid.sort();
         return Err(anyhow!(
             "missing sort columns: {:?}. Valid fields: {:?}",
-            missing, valid
+            missing,
+            valid
         ));
     }
     Ok(())
@@ -566,23 +633,30 @@ fn count_boundary_violations(
         let (path_b, min_b, _max_b) = (&win[1].0, &win[1].1, &win[1].2);
         if cmp_tuple_with_nulls(max_a, min_b, nulls_first).is_gt() {
             violations += 1;
-            details.push(format!("boundary violation: {} max > {} min", path_a, path_b));
+            details.push(format!(
+                "boundary violation: {} max > {} min",
+                path_a, path_b
+            ));
         }
     }
     (violations, details)
 }
-
-
 
 async fn minmax_for_uri(
     ctx: &datafusion::prelude::SessionContext,
     uri: &str,
     cols: &[String],
 ) -> Result<Option<(Vec<SortVal>, Vec<SortVal>)>> {
-    if cols.is_empty() { return Ok(None); }
-    let df = ctx.read_parquet(vec![uri.to_string()], ParquetReadOptions::default()).await?;
+    if cols.is_empty() {
+        return Ok(None);
+    }
+    let df = ctx
+        .read_parquet(vec![uri.to_string()], ParquetReadOptions::default())
+        .await?;
     let batches = df.collect().await?;
-    if batches.is_empty() { return Ok(None); }
+    if batches.is_empty() {
+        return Ok(None);
+    }
     let schema = batches[0].schema();
     let mut indices: Vec<usize> = Vec::with_capacity(cols.len());
     for c in cols {
@@ -600,11 +674,19 @@ async fn minmax_for_uri(
             }
             match &min_tuple {
                 None => min_tuple = Some(t.clone()),
-                Some(current) => { if cmp_tuple_with_nulls(&t, current, true).is_lt() { min_tuple = Some(t.clone()); } }
+                Some(current) => {
+                    if cmp_tuple_with_nulls(&t, current, true).is_lt() {
+                        min_tuple = Some(t.clone());
+                    }
+                }
             }
             match &max_tuple {
                 None => max_tuple = Some(t.clone()),
-                Some(current) => { if cmp_tuple_with_nulls(&t, current, true).is_gt() { max_tuple = Some(t); } }
+                Some(current) => {
+                    if cmp_tuple_with_nulls(&t, current, true).is_gt() {
+                        max_tuple = Some(t);
+                    }
+                }
             }
         }
     }
@@ -618,47 +700,100 @@ fn arrow_value_to_sortval(arr: ArrayRef, idx: usize) -> SortVal {
     match arr.data_type() {
         DataType::Int32 => {
             let a = arr.as_any().downcast_ref::<Int32Array>().unwrap();
-            if a.is_null(idx) { SortVal::Null } else { SortVal::Int(a.value(idx) as i128) }
+            if a.is_null(idx) {
+                SortVal::Null
+            } else {
+                SortVal::Int(a.value(idx) as i128)
+            }
         }
         DataType::Int64 => {
             let a = arr.as_any().downcast_ref::<Int64Array>().unwrap();
-            if a.is_null(idx) { SortVal::Null } else { SortVal::Int(a.value(idx) as i128) }
+            if a.is_null(idx) {
+                SortVal::Null
+            } else {
+                SortVal::Int(a.value(idx) as i128)
+            }
         }
         DataType::Float32 => {
             let a = arr.as_any().downcast_ref::<Float32Array>().unwrap();
-            if a.is_null(idx) { SortVal::Null } else { SortVal::Float(a.value(idx) as f64) }
+            if a.is_null(idx) {
+                SortVal::Null
+            } else {
+                SortVal::Float(a.value(idx) as f64)
+            }
         }
         DataType::Float64 => {
             let a = arr.as_any().downcast_ref::<Float64Array>().unwrap();
-            if a.is_null(idx) { SortVal::Null } else { SortVal::Float(a.value(idx)) }
+            if a.is_null(idx) {
+                SortVal::Null
+            } else {
+                SortVal::Float(a.value(idx))
+            }
         }
         DataType::Utf8 => {
             let a = arr.as_any().downcast_ref::<StringArray>().unwrap();
-            if a.is_null(idx) { SortVal::Null } else { SortVal::Str(a.value(idx).to_string()) }
+            if a.is_null(idx) {
+                SortVal::Null
+            } else {
+                SortVal::Str(a.value(idx).to_string())
+            }
         }
         DataType::LargeUtf8 => {
             let a = arr.as_any().downcast_ref::<LargeStringArray>().unwrap();
-            if a.is_null(idx) { SortVal::Null } else { SortVal::Str(a.value(idx).to_string()) }
+            if a.is_null(idx) {
+                SortVal::Null
+            } else {
+                SortVal::Str(a.value(idx).to_string())
+            }
         }
         DataType::Boolean => {
             let a = arr.as_any().downcast_ref::<BooleanArray>().unwrap();
-            if a.is_null(idx) { SortVal::Null } else { SortVal::Bool(a.value(idx)) }
+            if a.is_null(idx) {
+                SortVal::Null
+            } else {
+                SortVal::Bool(a.value(idx))
+            }
         }
         DataType::Timestamp(TimeUnit::Second, _) => {
             let a = arr.as_any().downcast_ref::<TimestampSecondArray>().unwrap();
-            if a.is_null(idx) { SortVal::Null } else { SortVal::Ts(a.value(idx) as i128) }
+            if a.is_null(idx) {
+                SortVal::Null
+            } else {
+                SortVal::Ts(a.value(idx) as i128)
+            }
         }
         DataType::Timestamp(TimeUnit::Millisecond, _) => {
-            let a = arr.as_any().downcast_ref::<TimestampMillisecondArray>().unwrap();
-            if a.is_null(idx) { SortVal::Null } else { SortVal::Ts(a.value(idx) as i128) }
+            let a = arr
+                .as_any()
+                .downcast_ref::<TimestampMillisecondArray>()
+                .unwrap();
+            if a.is_null(idx) {
+                SortVal::Null
+            } else {
+                SortVal::Ts(a.value(idx) as i128)
+            }
         }
         DataType::Timestamp(TimeUnit::Microsecond, _) => {
-            let a = arr.as_any().downcast_ref::<TimestampMicrosecondArray>().unwrap();
-            if a.is_null(idx) { SortVal::Null } else { SortVal::Ts(a.value(idx) as i128) }
+            let a = arr
+                .as_any()
+                .downcast_ref::<TimestampMicrosecondArray>()
+                .unwrap();
+            if a.is_null(idx) {
+                SortVal::Null
+            } else {
+                SortVal::Ts(a.value(idx) as i128)
+            }
         }
         DataType::Timestamp(TimeUnit::Nanosecond, _) => {
-            let a = arr.as_any().downcast_ref::<TimestampNanosecondArray>().unwrap();
-            if a.is_null(idx) { SortVal::Null } else { SortVal::Ts(a.value(idx) as i128) }
+            let a = arr
+                .as_any()
+                .downcast_ref::<TimestampNanosecondArray>()
+                .unwrap();
+            if a.is_null(idx) {
+                SortVal::Null
+            } else {
+                SortVal::Ts(a.value(idx) as i128)
+            }
         }
         _ => SortVal::Other(format!("{arr:?}")),
     }
@@ -669,10 +804,10 @@ pub(crate) async fn rewrite_partition_tx(
     group: &RewriteGroup,
     cfg: &SortConfig,
 ) -> Result<PartitionMetrics> {
-    use datafusion::prelude::{col, lit, Expr, SessionContext};
+    use datafusion::prelude::{Expr, SessionContext, col, lit};
     use deltalake::kernel::{Action, Remove};
-    use deltalake::protocol::{DeltaOperation, SaveMode};
     use deltalake::operations::transaction::CommitBuilder;
+    use deltalake::protocol::{DeltaOperation, SaveMode};
 
     let mut table = deltalake::open_table(table_uri)
         .await
@@ -689,12 +824,18 @@ pub(crate) async fn rewrite_partition_tx(
     }
     let mut df = ctx.sql(&sql).await?;
     if !cfg.sort_columns.is_empty() {
-        use datafusion::logical_expr::Expr;
         use datafusion::common::Column as DFColumn;
+        use datafusion::logical_expr::Expr;
         let sort_exprs = cfg
             .sort_columns
             .iter()
-            .map(|c| Expr::Column(DFColumn { relation: None, name: c.clone() }).sort(true, cfg.nulls_first))
+            .map(|c| {
+                Expr::Column(DFColumn {
+                    relation: None,
+                    name: c.clone(),
+                })
+                .sort(true, cfg.nulls_first)
+            })
             .collect::<Vec<_>>();
         df = df.sort(sort_exprs)?;
     }
@@ -707,12 +848,16 @@ pub(crate) async fn rewrite_partition_tx(
         rb_writer.write(batch).await?;
         if target > 0 && rb_writer.buffer_len() >= target {
             let mut adds = rb_writer.flush().await?;
-            for a in &mut adds { a.data_change = false; }
+            for a in &mut adds {
+                a.data_change = false;
+            }
             all_adds.extend(adds);
         }
     }
     let mut adds = rb_writer.flush().await?;
-    for a in &mut adds { a.data_change = false; }
+    for a in &mut adds {
+        a.data_change = false;
+    }
     all_adds.extend(adds);
 
     let mut removes: Vec<Remove> = Vec::new();
@@ -741,18 +886,36 @@ pub(crate) async fn rewrite_partition_tx(
     actions.extend(removes.into_iter().map(Action::Remove));
     actions.extend(all_adds.into_iter().map(Action::Add));
 
-    let predicate_str = group.partition.as_ref().map(|parts| build_partition_predicate_sql_typed(&table, parts));
-    let operation = DeltaOperation::Write { mode: SaveMode::Overwrite, partition_by: None, predicate: predicate_str };
+    let predicate_str = group
+        .partition
+        .as_ref()
+        .map(|parts| build_partition_predicate_sql_typed(&table, parts));
+    let operation = DeltaOperation::Write {
+        mode: SaveMode::Overwrite,
+        partition_by: None,
+        predicate: predicate_str,
+    };
 
     let version = CommitBuilder::default()
         .with_actions(actions)
-        .build(Some(table.snapshot().unwrap()), table.log_store().clone(), operation)
+        .build(
+            Some(table.snapshot().unwrap()),
+            table.log_store().clone(),
+            operation,
+        )
         .await?
         .version();
     table.update().await?;
     let duration_ms = start.elapsed().as_millis();
     info!(?group.partition, files_in, files_out, bytes_in, bytes_out, duration_ms, version, "partition rewrite committed");
-    Ok(PartitionMetrics { partition: group.partition.clone(), files_in, files_out, bytes_in, bytes_out, duration_ms })
+    Ok(PartitionMetrics {
+        partition: group.partition.clone(),
+        files_in,
+        files_out,
+        bytes_in,
+        bytes_out,
+        duration_ms,
+    })
 }
 
 fn build_partition_predicate_sql(parts: &[(String, String)]) -> String {
@@ -771,9 +934,14 @@ fn build_partition_predicate_sql(parts: &[(String, String)]) -> String {
 
 fn build_partition_predicate_sql_typed(table: &DeltaTable, parts: &[(String, String)]) -> String {
     use deltalake::kernel::DataType as KDT;
-    let schema = match table.get_schema() { Ok(s) => s, Err(_) => return build_partition_predicate_sql(parts) };
+    let schema = match table.get_schema() {
+        Ok(s) => s,
+        Err(_) => return build_partition_predicate_sql(parts),
+    };
     let mut type_map = std::collections::HashMap::new();
-    for f in schema.fields() { type_map.insert(f.name.clone(), f.data_type().clone()); }
+    for f in schema.fields() {
+        type_map.insert(f.name.clone(), f.data_type().clone());
+    }
     build_partition_predicate_sql_from_types(&type_map, parts)
 }
 
@@ -798,12 +966,18 @@ fn build_partition_predicate_sql_from_types(
             | Some(KDT::Primitive(KPT::Short))
             | Some(KDT::Primitive(KPT::Integer))
             | Some(KDT::Primitive(KPT::Long)) => {
-                if val.parse::<i128>().is_ok() { push_num(k, val, &mut exprs); }
-                else { exprs.push(format!("\"{}\" = '{}'", k, val.replace("'", "''"))); }
+                if val.parse::<i128>().is_ok() {
+                    push_num(k, val, &mut exprs);
+                } else {
+                    exprs.push(format!("\"{}\" = '{}'", k, val.replace("'", "''")));
+                }
             }
             Some(KDT::Primitive(KPT::Float)) | Some(KDT::Primitive(KPT::Double)) => {
-                if val.parse::<f64>().is_ok() { push_num(k, val, &mut exprs); }
-                else { exprs.push(format!("\"{}\" = '{}'", k, val.replace("'", "''"))); }
+                if val.parse::<f64>().is_ok() {
+                    push_num(k, val, &mut exprs);
+                } else {
+                    exprs.push(format!("\"{}\" = '{}'", k, val.replace("'", "''")));
+                }
             }
             Some(KDT::Primitive(KPT::Boolean)) => {
                 let low = val.to_ascii_lowercase();
@@ -814,7 +988,10 @@ fn build_partition_predicate_sql_from_types(
                 }
             }
             Some(KDT::Primitive(KPT::Decimal(_, _))) => {
-                if val.chars().all(|c| c.is_ascii_digit() || c == '.' || c == '-' || c == '+') {
+                if val
+                    .chars()
+                    .all(|c| c.is_ascii_digit() || c == '.' || c == '-' || c == '+')
+                {
                     push_num(k, val, &mut exprs);
                 } else {
                     exprs.push(format!("\"{}\" = '{}'", k, val.replace("'", "''")));
@@ -834,7 +1011,9 @@ fn build_partition_predicate_expr_typed(table: &DeltaTable, parts: &[(String, St
     let schema = table.get_schema();
     let mut type_map = std::collections::HashMap::new();
     if let Ok(s) = schema {
-        for f in s.fields() { type_map.insert(f.name.clone(), f.data_type().clone()); }
+        for f in s.fields() {
+            type_map.insert(f.name.clone(), f.data_type().clone());
+        }
     }
     build_partition_predicate_expr_from_types(&type_map, parts)
 }
@@ -848,36 +1027,78 @@ fn build_partition_predicate_expr_from_types(
     for (k, raw) in parts {
         let val = raw.trim_matches('"').to_string();
         let e = if val.eq_ignore_ascii_case("null") {
-            Expr::IsNull(Box::new(Expr::Column(DFColumn { relation: None, name: k.clone() })))
+            Expr::IsNull(Box::new(Expr::Column(DFColumn {
+                relation: None,
+                name: k.clone(),
+            })))
         } else {
             match type_map.get(k) {
                 Some(KDT::Primitive(KPT::Boolean)) => {
                     let low = val.to_ascii_lowercase();
                     let litv = matches!(low.as_str(), "true" | "t" | "1");
-                    Expr::Column(DFColumn { relation: None, name: k.clone() }).eq(Expr::Literal(datafusion::scalar::ScalarValue::Boolean(Some(litv))))
+                    Expr::Column(DFColumn {
+                        relation: None,
+                        name: k.clone(),
+                    })
+                    .eq(Expr::Literal(
+                        datafusion::scalar::ScalarValue::Boolean(Some(litv)),
+                    ))
                 }
                 Some(KDT::Primitive(KPT::Byte))
                 | Some(KDT::Primitive(KPT::Short))
                 | Some(KDT::Primitive(KPT::Integer))
                 | Some(KDT::Primitive(KPT::Long)) => {
                     if let Ok(n) = val.parse::<i64>() {
-                        Expr::Column(DFColumn { relation: None, name: k.clone() }).eq(Expr::Literal(datafusion::scalar::ScalarValue::Int64(Some(n))))
+                        Expr::Column(DFColumn {
+                            relation: None,
+                            name: k.clone(),
+                        })
+                        .eq(Expr::Literal(
+                            datafusion::scalar::ScalarValue::Int64(Some(n)),
+                        ))
                     } else {
-                        Expr::Column(DFColumn { relation: None, name: k.clone() }).eq(Expr::Literal(datafusion::scalar::ScalarValue::Utf8(Some(val.clone()))))
+                        Expr::Column(DFColumn {
+                            relation: None,
+                            name: k.clone(),
+                        })
+                        .eq(Expr::Literal(
+                            datafusion::scalar::ScalarValue::Utf8(Some(val.clone())),
+                        ))
                     }
                 }
                 Some(KDT::Primitive(KPT::Float)) | Some(KDT::Primitive(KPT::Double)) => {
                     if let Ok(f) = val.parse::<f64>() {
-                        Expr::Column(DFColumn { relation: None, name: k.clone() }).eq(Expr::Literal(datafusion::scalar::ScalarValue::Float64(Some(f))))
+                        Expr::Column(DFColumn {
+                            relation: None,
+                            name: k.clone(),
+                        })
+                        .eq(Expr::Literal(
+                            datafusion::scalar::ScalarValue::Float64(Some(f)),
+                        ))
                     } else {
-                        Expr::Column(DFColumn { relation: None, name: k.clone() }).eq(Expr::Literal(datafusion::scalar::ScalarValue::Utf8(Some(val.clone()))))
+                        Expr::Column(DFColumn {
+                            relation: None,
+                            name: k.clone(),
+                        })
+                        .eq(Expr::Literal(
+                            datafusion::scalar::ScalarValue::Utf8(Some(val.clone())),
+                        ))
                     }
                 }
                 // Fallbacks: compare as string literal
-                _ => Expr::Column(DFColumn { relation: None, name: k.clone() }).eq(Expr::Literal(datafusion::scalar::ScalarValue::Utf8(Some(val.clone())))),
+                _ => Expr::Column(DFColumn {
+                    relation: None,
+                    name: k.clone(),
+                })
+                .eq(Expr::Literal(datafusion::scalar::ScalarValue::Utf8(Some(
+                    val.clone(),
+                )))),
             }
         };
-        pred = Some(match pred { Some(p) => p.and(e), None => e });
+        pred = Some(match pred {
+            Some(p) => p.and(e),
+            None => e,
+        });
     }
     pred.unwrap_or_else(|| Expr::Literal(datafusion::scalar::ScalarValue::Boolean(Some(true))))
 }
@@ -905,7 +1126,10 @@ mod tests {
             ("region".to_string(), "NULL".to_string()),
         ];
         let pred = build_partition_predicate_sql_from_types(&tm, &parts);
-        assert_eq!(pred, "\"id\" = 42 AND \"active\" = TRUE AND \"amount\" = 1234.50 AND \"country\" = 'US' AND \"region\" IS NULL");
+        assert_eq!(
+            pred,
+            "\"id\" = 42 AND \"active\" = TRUE AND \"amount\" = 1234.50 AND \"country\" = 'US' AND \"region\" IS NULL"
+        );
     }
 
     #[test]

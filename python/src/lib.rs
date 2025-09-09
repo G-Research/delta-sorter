@@ -2,7 +2,7 @@ use once_cell::sync::OnceCell;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
-use sorter_core::{compact_with_sort, validate_global_order, SortConfig};
+use sorter_core::{SortConfig, compact_with_sort, validate_global_order};
 
 static RUNTIME: OnceCell<tokio::runtime::Runtime> = OnceCell::new();
 
