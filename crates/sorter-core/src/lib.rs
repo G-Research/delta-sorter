@@ -2,6 +2,7 @@ use anyhow::{Context, Result, anyhow};
 use datafusion::common::Column as DFColumn;
 use datafusion::logical_expr::Expr;
 use datafusion::prelude::ParquetReadOptions;
+use deltalake::DeltaTable;
 use deltalake::arrow::array::{
     Array, ArrayRef, BooleanArray, Float32Array, Float64Array, Int32Array, Int64Array,
     LargeStringArray, StringArray, TimestampMicrosecondArray, TimestampMillisecondArray,
@@ -10,9 +11,7 @@ use deltalake::arrow::array::{
 use deltalake::arrow::datatypes::{DataType, TimeUnit};
 use deltalake::kernel::scalars::ScalarExt;
 use deltalake::writer::DeltaWriter;
-use deltalake::DeltaTable;
 use futures::StreamExt;
-use num_traits::float::TotalOrder;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use tracing::{debug, info, warn};
@@ -57,6 +56,7 @@ fn cmp_sort_val_with_nulls(a: &SortVal, b: &SortVal, nulls_first: bool) -> std::
         (SortVal::Float(x), SortVal::Float(y)) => x.total_cmp(y),
         (SortVal::Ts(x), SortVal::Ts(y)) => x.cmp(y),
         (SortVal::Str(x), SortVal::Str(y)) => x.cmp(y),
+        (SortVal::Other(x), SortVal::Other(y)) => x.cmp(y),
         // Mismatched non-NULL types: should not occur with a consistent schema.
         // Use a stable but arbitrary ordering and flag in debug builds.
         (ax, by) => {
@@ -426,7 +426,7 @@ pub(crate) async fn commit_full_sorted_overwrite(
 ) -> Result<()> {
     use datafusion::prelude::SessionContext;
     use deltalake::kernel::Remove;
-    
+
     use deltalake::protocol::SaveMode;
 
     let table = deltalake::open_table(table_uri)
@@ -929,7 +929,6 @@ fn build_partition_predicate_sql(parts: &[(String, String)]) -> String {
 }
 
 fn build_partition_predicate_sql_typed(table: &DeltaTable, parts: &[(String, String)]) -> String {
-    
     let schema = match table.get_schema() {
         Ok(s) => s,
         Err(_) => return build_partition_predicate_sql(parts),
@@ -1003,7 +1002,6 @@ fn build_partition_predicate_sql_from_types(
 }
 
 fn build_partition_predicate_expr_typed(table: &DeltaTable, parts: &[(String, String)]) -> Expr {
-    
     let schema = table.get_schema();
     let mut type_map = std::collections::HashMap::new();
     if let Ok(s) = schema {
