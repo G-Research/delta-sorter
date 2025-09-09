@@ -1,10 +1,8 @@
-from pathlib import Path
-
 import pytest
+from deltasort import SortOptimizer
 
 pd = pytest.importorskip("pandas")
 deltalake = pytest.importorskip("deltalake")
-from deltasort import SortOptimizer
 
 
 def _write_partitioned_numeric_bool(table_uri: str):
@@ -17,7 +15,9 @@ def _write_partitioned_numeric_bool(table_uri: str):
         }
     )
     # Partition by both numeric and boolean columns
-    deltalake.write_deltalake(table_uri, df, mode="overwrite", partition_by=["id", "flag"])
+    deltalake.write_deltalake(
+        table_uri, df, mode="overwrite", partition_by=["id", "flag"]
+    )
 
 
 def test_compact_partitioned_numeric_bool(tmp_table: str):
