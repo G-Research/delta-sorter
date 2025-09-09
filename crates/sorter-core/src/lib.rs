@@ -8,17 +8,13 @@ use deltalake::arrow::array::{
     TimestampNanosecondArray, TimestampSecondArray,
 };
 use deltalake::arrow::datatypes::{DataType, TimeUnit};
-use deltalake::kernel::Action;
 use deltalake::kernel::scalars::ScalarExt;
-use deltalake::protocol::DeltaOperation;
 use deltalake::writer::DeltaWriter;
-use deltalake::{DeltaTable, DeltaTableError};
+use deltalake::DeltaTable;
 use futures::StreamExt;
 use num_traits::float::TotalOrder;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
-use std::path::Path as FsPath;
-use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 #[derive(Clone, Debug)]
@@ -323,7 +319,7 @@ pub(crate) async fn rewrite_partition_overwrite(
     group: &RewriteGroup,
     cfg: &SortConfig,
 ) -> Result<()> {
-    use datafusion::prelude::{SessionContext, col, lit};
+    use datafusion::prelude::{SessionContext, col};
     use deltalake::operations::DeltaOps;
 
     let table = deltalake::open_table(table_uri)
@@ -428,12 +424,12 @@ pub(crate) async fn commit_full_sorted_overwrite(
     sort_columns: &[String],
     nulls_first: bool,
 ) -> Result<()> {
-    use datafusion::prelude::{SessionContext, col};
-    use deltalake::kernel::{Action, Remove};
-    use deltalake::operations::transaction::CommitBuilder;
-    use deltalake::protocol::{DeltaOperation, SaveMode};
+    use datafusion::prelude::SessionContext;
+    use deltalake::kernel::Remove;
+    
+    use deltalake::protocol::SaveMode;
 
-    let mut table = deltalake::open_table(table_uri)
+    let table = deltalake::open_table(table_uri)
         .await
         .with_context(|| format!("open_table({table_uri}) for overwrite"))?;
 
@@ -804,7 +800,7 @@ pub(crate) async fn rewrite_partition_tx(
     group: &RewriteGroup,
     cfg: &SortConfig,
 ) -> Result<PartitionMetrics> {
-    use datafusion::prelude::{Expr, SessionContext, col, lit};
+    use datafusion::prelude::SessionContext;
     use deltalake::kernel::{Action, Remove};
     use deltalake::operations::transaction::CommitBuilder;
     use deltalake::protocol::{DeltaOperation, SaveMode};
@@ -872,7 +868,7 @@ pub(crate) async fn rewrite_partition_tx(
             .map(|(k, v)| (k.to_string(), v.serialize()))
             .collect();
         parts_vec.sort_by(|a, b| a.0.cmp(&b.0));
-        if &Some(parts_vec) == &group.partition {
+        if Some(parts_vec) == group.partition {
             bytes_in += add.size();
             removes.push(add.remove_action(false));
         }
@@ -933,7 +929,7 @@ fn build_partition_predicate_sql(parts: &[(String, String)]) -> String {
 }
 
 fn build_partition_predicate_sql_typed(table: &DeltaTable, parts: &[(String, String)]) -> String {
-    use deltalake::kernel::DataType as KDT;
+    
     let schema = match table.get_schema() {
         Ok(s) => s,
         Err(_) => return build_partition_predicate_sql(parts),
@@ -1007,7 +1003,7 @@ fn build_partition_predicate_sql_from_types(
 }
 
 fn build_partition_predicate_expr_typed(table: &DeltaTable, parts: &[(String, String)]) -> Expr {
-    use deltalake::kernel::{DataType as KDT, PrimitiveType as KPT};
+    
     let schema = table.get_schema();
     let mut type_map = std::collections::HashMap::new();
     if let Ok(s) = schema {
