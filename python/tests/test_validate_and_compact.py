@@ -1,10 +1,8 @@
 import pytest
-from pathlib import Path
+from deltasort import SortOptimizer
 
 deltalake = pytest.importorskip("deltalake")
 pd = pytest.importorskip("pandas")
-
-from deltasort import SortOptimizer
 
 
 def _write_unsorted_table(table_uri: str, partition_by=None):

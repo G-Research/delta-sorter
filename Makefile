@@ -22,9 +22,11 @@ build-cli:
 
 fmt:
 	cargo fmt --all
+	cd python && $(PY) -m ruff format
 
 lint:
 	cargo clippy --workspace -- -D warnings
+	cargo fmt --all --check
 
 test:
 	cargo test --workspace
@@ -34,17 +36,25 @@ test-all:
 	$(MAKE) test
 	$(MAKE) py-test
 
+lint-all:
+	$(MAKE) lint
+	$(MAKE) py-lint
+
 py-build:
 	$(MATURIN) build -m python/Cargo.toml
 
 py-dev:
 	$(MATURIN) develop -m python/Cargo.toml
 
+py-lint:
+	cd python && $(PY) -m ruff check
+	cd python && $(PY) -m ruff format --check
+
 setup-maturin:
 	$(PY) -m pip install -U "maturin[patchelf]"
 
 setup-py:
-	$(PY) -m pip install -U pytest hypothesis deltalake pandas pyarrow
+	$(PY) -m pip install -U pytest hypothesis deltalake pandas pyarrow ruff
 
 py-test: py-dev
 	pytest -q python/tests

@@ -1,17 +1,21 @@
 use anyhow::Result;
 use clap::Parser;
-use sorter_core::{compact_with_sort, validate_global_order, SortConfig};
-use tracing_subscriber::{fmt, EnvFilter};
+use sorter_core::{SortConfig, compact_with_sort, validate_global_order};
+use tracing_subscriber::{EnvFilter, fmt};
 
 #[derive(Parser, Debug)]
-#[command(name="deltasort", version, about="Compaction + global sort for Delta tables (delta-rs)")]
+#[command(
+    name = "deltasort",
+    version,
+    about = "Compaction + global sort for Delta tables (delta-rs)"
+)]
 struct Args {
     /// Table URI, e.g. s3://bucket/table or /path/to/table
     #[arg(long)]
     table: String,
 
     /// Comma-separated list of columns to sort by (lexicographic order)
-    #[arg(long, value_delimiter=',')]
+    #[arg(long, value_delimiter = ',')]
     sort_columns: Vec<String>,
 
     /// Target file size in bytes (e.g., 268435456 for 256MB)
