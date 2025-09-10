@@ -44,7 +44,7 @@ setup-maturin:
 	$(PY) -m pip install -U "maturin[patchelf]"
 
 setup-py:
-	$(PY) -m pip install -U pytest deltalake pandas pyarrow
+	$(PY) -m pip install -U pytest hypothesis deltalake pandas pyarrow
 
 py-test: py-dev
 	pytest -q python/tests
