@@ -257,7 +257,8 @@ pub(crate) async fn plan_rewrites(table_uri: &str, cfg: &SortConfig) -> Result<R
 
     use std::collections::BTreeMap;
     let mut by_partition: BTreeMap<String, RewriteGroup> = BTreeMap::new();
-    while let Some(add) = table.get_active_add_actions_by_partitions(&[]).next().await {
+    let mut adds = table.get_active_add_actions_by_partitions(&[]);
+    while let Some(add) = adds.next().await {
         let add = add?;
         let Some(pvals) = add.partition_values() else {
             continue;
@@ -406,7 +407,8 @@ pub(crate) async fn execute_rewrites(
     }
 
     let mut removes: Vec<deltalake::kernel::Remove> = Vec::new();
-    while let Some(add) = table.get_active_add_actions_by_partitions(&[]).next().await {
+    let mut adds = table.get_active_add_actions_by_partitions(&[]);
+    while let Some(add) = adds.next().await {
         let remove = add?.remove_action(false);
         removes.push(remove);
     }
@@ -457,11 +459,13 @@ pub(crate) async fn commit_full_sorted_overwrite(
 
     let mut removes: Vec<Remove> = Vec::new();
     let mut bytes_in: i64 = 0;
-    while let Some(add) = table.get_active_add_actions_by_partitions(&[]).next().await {
+    let mut adds = table.get_active_add_actions_by_partitions(&[]);
+    while let Some(add) = adds.next().await {
         let add = add?;
         bytes_in += add.size();
         removes.push(add.remove_action(false));
     }
+    drop(adds);
 
     let files_in = removes.len();
 
@@ -841,7 +845,8 @@ pub(crate) async fn rewrite_partition_tx(
 
     let mut removes: Vec<Remove> = Vec::new();
     let mut bytes_in: i64 = 0;
-    while let Some(add) = table.get_active_add_actions_by_partitions(&[]).next().await {
+    let mut adds = table.get_active_add_actions_by_partitions(&[]);
+    while let Some(add) = adds.next().await {
         let add = add?;
         let Some(pvals) = add.partition_values() else {
             continue;
@@ -858,6 +863,7 @@ pub(crate) async fn rewrite_partition_tx(
             removes.push(add.remove_action(false));
         }
     }
+    drop(adds);
 
     let files_in = removes.len();
     let files_out = all_adds.len();
