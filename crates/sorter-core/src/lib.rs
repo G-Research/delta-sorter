@@ -1,5 +1,4 @@
 use anyhow::{Context, Result, anyhow};
-use datafusion::common::Column as DFColumn;
 use datafusion::logical_expr::Expr;
 use datafusion::prelude::ParquetReadOptions;
 use deltalake::DeltaTable;
@@ -10,10 +9,12 @@ use deltalake::arrow::array::{
 };
 use deltalake::arrow::datatypes::{DataType, TimeUnit};
 use deltalake::kernel::scalars::ScalarExt;
+use deltalake::kernel::transaction::CommitBuilder;
 use deltalake::writer::DeltaWriter;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
+use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 #[derive(Clone, Debug)]
@@ -256,14 +257,16 @@ pub(crate) async fn plan_rewrites(table_uri: &str, cfg: &SortConfig) -> Result<R
 
     use std::collections::BTreeMap;
     let mut by_partition: BTreeMap<String, RewriteGroup> = BTreeMap::new();
-    for add in table
-        .get_active_add_actions_by_partitions(&[])?
-        .collect::<Result<Vec<_>, _>>()?
-    {
-        let pvals = add.partition_values().unwrap_or_default();
+    while let Some(add) = table.get_active_add_actions_by_partitions(&[]).next().await {
+        let add = add?;
+        let Some(pvals) = add.partition_values() else {
+            continue;
+        };
         let mut parts_vec: Vec<(String, String)> = pvals
+            .fields()
             .iter()
-            .map(|(k, v)| (k.to_string(), v.serialize()))
+            .zip(pvals.values().iter())
+            .map(|(k, v)| (k.name.clone(), v.serialize()))
             .collect();
         parts_vec.sort_by(|a, b| a.0.cmp(&b.0));
         let key = if parts_vec.is_empty() {
@@ -403,11 +406,8 @@ pub(crate) async fn execute_rewrites(
     }
 
     let mut removes: Vec<deltalake::kernel::Remove> = Vec::new();
-    for add in table
-        .get_active_add_actions_by_partitions(&[])?
-        .collect::<Result<Vec<_>, _>>()?
-    {
-        let remove = add.remove_action(false);
+    while let Some(add) = table.get_active_add_actions_by_partitions(&[]).next().await {
+        let remove = add?.remove_action(false);
         removes.push(remove);
     }
 
@@ -426,7 +426,7 @@ pub(crate) async fn commit_full_sorted_overwrite(
     sort_columns: &[String],
     nulls_first: bool,
 ) -> Result<()> {
-    use datafusion::prelude::SessionContext;
+    use datafusion::prelude::{SessionContext, col};
     use deltalake::kernel::Remove;
 
     use deltalake::protocol::SaveMode;
@@ -443,31 +443,22 @@ pub(crate) async fn commit_full_sorted_overwrite(
     ctx.register_table("t", std::sync::Arc::new(table.clone()))
         .context("register delta table in DataFusion (overwrite)")?;
     // Build DataFrame from table and apply sort via expressions
-    use datafusion::common::Column as DFColumn;
-    use datafusion::logical_expr::Expr;
     let mut df = ctx.table("t").await?;
     if !sort_columns.is_empty() {
         let sort_exprs = sort_columns
             .iter()
-            .map(|c| {
-                Expr::Column(DFColumn {
-                    relation: Some("t".into()),
-                    name: c.clone(),
-                })
-                .sort(true, nulls_first)
-            })
+            .map(|c| col(c).sort(true, nulls_first))
             .collect::<Vec<_>>();
         df = df.sort(sort_exprs)?;
     }
 
-    let plan = df.create_physical_plan().await?;
+    // TODO this seems like the wrong API?
+    let plan = Arc::new(df.into_optimized_plan()?);
 
     let mut removes: Vec<Remove> = Vec::new();
     let mut bytes_in: i64 = 0;
-    for add in table
-        .get_active_add_actions_by_partitions(&[])?
-        .collect::<Result<Vec<_>, _>>()?
-    {
+    while let Some(add) = table.get_active_add_actions_by_partitions(&[]).next().await {
+        let add = add?;
         bytes_in += add.size();
         removes.push(add.remove_action(false));
     }
@@ -596,7 +587,7 @@ async fn partition_is_sorted(
 }
 
 fn validate_sort_columns(table: &DeltaTable, cols: &[String]) -> Result<()> {
-    let schema = table.get_schema()?;
+    let schema = table.snapshot()?.schema();
     let field_names: std::collections::HashSet<&str> =
         schema.fields().map(|f| f.name.as_str()).collect();
     let missing: Vec<String> = cols
@@ -802,7 +793,6 @@ pub(crate) async fn rewrite_partition_tx(
 ) -> Result<PartitionMetrics> {
     use datafusion::prelude::SessionContext;
     use deltalake::kernel::{Action, Remove};
-    use deltalake::operations::transaction::CommitBuilder;
     use deltalake::protocol::{DeltaOperation, SaveMode};
 
     let mut table = deltalake::open_table(table_uri)
@@ -820,18 +810,11 @@ pub(crate) async fn rewrite_partition_tx(
     }
     let mut df = ctx.sql(&sql).await?;
     if !cfg.sort_columns.is_empty() {
-        use datafusion::common::Column as DFColumn;
-        use datafusion::logical_expr::Expr;
+        use datafusion::prelude::col;
         let sort_exprs = cfg
             .sort_columns
             .iter()
-            .map(|c| {
-                Expr::Column(DFColumn {
-                    relation: None,
-                    name: c.clone(),
-                })
-                .sort(true, cfg.nulls_first)
-            })
+            .map(|c| col(c).sort(true, cfg.nulls_first))
             .collect::<Vec<_>>();
         df = df.sort(sort_exprs)?;
     }
@@ -858,14 +841,16 @@ pub(crate) async fn rewrite_partition_tx(
 
     let mut removes: Vec<Remove> = Vec::new();
     let mut bytes_in: i64 = 0;
-    for add in table
-        .get_active_add_actions_by_partitions(&[])?
-        .collect::<Result<Vec<_>, _>>()?
-    {
-        let pvals = add.partition_values().unwrap_or_default();
+    while let Some(add) = table.get_active_add_actions_by_partitions(&[]).next().await {
+        let add = add?;
+        let Some(pvals) = add.partition_values() else {
+            continue;
+        };
         let mut parts_vec: Vec<(String, String)> = pvals
+            .fields()
             .iter()
-            .map(|(k, v)| (k.to_string(), v.serialize()))
+            .zip(pvals.values().iter())
+            .map(|(k, v)| (k.name.clone(), v.serialize()))
             .collect();
         parts_vec.sort_by(|a, b| a.0.cmp(&b.0));
         if Some(parts_vec) == group.partition {
@@ -929,8 +914,8 @@ fn build_partition_predicate_sql(parts: &[(String, String)]) -> String {
 }
 
 fn build_partition_predicate_sql_typed(table: &DeltaTable, parts: &[(String, String)]) -> String {
-    let schema = match table.get_schema() {
-        Ok(s) => s,
+    let schema = match table.snapshot() {
+        Ok(s) => s.schema(),
         Err(_) => return build_partition_predicate_sql(parts),
     };
     let mut type_map = std::collections::HashMap::new();
@@ -982,7 +967,7 @@ fn build_partition_predicate_sql_from_types(
                     exprs.push(format!("\"{}\" = '{}'", k, val.replace("'", "''")));
                 }
             }
-            Some(KDT::Primitive(KPT::Decimal(_, _))) => {
+            Some(KDT::Primitive(KPT::Decimal(_))) => {
                 if val
                     .chars()
                     .all(|c| c.is_ascii_digit() || c == '.' || c == '-' || c == '+')
@@ -1002,10 +987,10 @@ fn build_partition_predicate_sql_from_types(
 }
 
 fn build_partition_predicate_expr_typed(table: &DeltaTable, parts: &[(String, String)]) -> Expr {
-    let schema = table.get_schema();
+    let snapshot = table.snapshot();
     let mut type_map = std::collections::HashMap::new();
-    if let Ok(s) = schema {
-        for f in s.fields() {
+    if let Ok(s) = snapshot {
+        for f in s.schema().fields() {
             type_map.insert(f.name.clone(), f.data_type().clone());
         }
     }
@@ -1016,26 +1001,21 @@ fn build_partition_predicate_expr_from_types(
     type_map: &std::collections::HashMap<String, deltalake::kernel::DataType>,
     parts: &[(String, String)],
 ) -> Expr {
+    use datafusion::prelude::col;
     use deltalake::kernel::{DataType as KDT, PrimitiveType as KPT};
     let mut pred: Option<Expr> = None;
     for (k, raw) in parts {
         let val = raw.trim_matches('"').to_string();
         let e = if val.eq_ignore_ascii_case("null") {
-            Expr::IsNull(Box::new(Expr::Column(DFColumn {
-                relation: None,
-                name: k.clone(),
-            })))
+            col(k).is_null()
         } else {
             match type_map.get(k) {
                 Some(KDT::Primitive(KPT::Boolean)) => {
                     let low = val.to_ascii_lowercase();
                     let litv = matches!(low.as_str(), "true" | "t" | "1");
-                    Expr::Column(DFColumn {
-                        relation: None,
-                        name: k.clone(),
-                    })
-                    .eq(Expr::Literal(
+                    col(k).eq(Expr::Literal(
                         datafusion::scalar::ScalarValue::Boolean(Some(litv)),
+                        None,
                     ))
                 }
                 Some(KDT::Primitive(KPT::Byte))
@@ -1043,50 +1023,35 @@ fn build_partition_predicate_expr_from_types(
                 | Some(KDT::Primitive(KPT::Integer))
                 | Some(KDT::Primitive(KPT::Long)) => {
                     if let Ok(n) = val.parse::<i64>() {
-                        Expr::Column(DFColumn {
-                            relation: None,
-                            name: k.clone(),
-                        })
-                        .eq(Expr::Literal(
+                        col(k).eq(Expr::Literal(
                             datafusion::scalar::ScalarValue::Int64(Some(n)),
+                            None,
                         ))
                     } else {
-                        Expr::Column(DFColumn {
-                            relation: None,
-                            name: k.clone(),
-                        })
-                        .eq(Expr::Literal(
+                        col(k).eq(Expr::Literal(
                             datafusion::scalar::ScalarValue::Utf8(Some(val.clone())),
+                            None,
                         ))
                     }
                 }
                 Some(KDT::Primitive(KPT::Float)) | Some(KDT::Primitive(KPT::Double)) => {
                     if let Ok(f) = val.parse::<f64>() {
-                        Expr::Column(DFColumn {
-                            relation: None,
-                            name: k.clone(),
-                        })
-                        .eq(Expr::Literal(
+                        col(k).eq(Expr::Literal(
                             datafusion::scalar::ScalarValue::Float64(Some(f)),
+                            None,
                         ))
                     } else {
-                        Expr::Column(DFColumn {
-                            relation: None,
-                            name: k.clone(),
-                        })
-                        .eq(Expr::Literal(
+                        col(k).eq(Expr::Literal(
                             datafusion::scalar::ScalarValue::Utf8(Some(val.clone())),
+                            None,
                         ))
                     }
                 }
                 // Fallbacks: compare as string literal
-                _ => Expr::Column(DFColumn {
-                    relation: None,
-                    name: k.clone(),
-                })
-                .eq(Expr::Literal(datafusion::scalar::ScalarValue::Utf8(Some(
-                    val.clone(),
-                )))),
+                _ => col(k).eq(Expr::Literal(
+                    datafusion::scalar::ScalarValue::Utf8(Some(val.clone())),
+                    None,
+                )),
             }
         };
         pred = Some(match pred {
@@ -1094,7 +1059,9 @@ fn build_partition_predicate_expr_from_types(
             None => e,
         });
     }
-    pred.unwrap_or_else(|| Expr::Literal(datafusion::scalar::ScalarValue::Boolean(Some(true))))
+    pred.unwrap_or_else(|| {
+        Expr::Literal(datafusion::scalar::ScalarValue::Boolean(Some(true)), None)
+    })
 }
 
 #[cfg(test)]
@@ -1108,7 +1075,10 @@ mod tests {
         let mut tm: HashMap<String, KDT> = HashMap::new();
         tm.insert("id".to_string(), KDT::Primitive(KPT::Integer));
         tm.insert("active".to_string(), KDT::Primitive(KPT::Boolean));
-        tm.insert("amount".to_string(), KDT::Primitive(KPT::Decimal(10, 2)));
+        tm.insert(
+            "amount".to_string(),
+            KDT::Primitive(KPT::decimal(10, 2).unwrap()),
+        );
         tm.insert("country".to_string(), KDT::Primitive(KPT::String));
         tm.insert("region".to_string(), KDT::Primitive(KPT::String));
 
