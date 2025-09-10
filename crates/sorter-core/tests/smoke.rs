@@ -1,4 +1,4 @@
-use sorter_core::{compact_with_sort, SortConfig};
+use sorter_core::{SortConfig, compact_with_sort};
 
 #[tokio::test]
 async fn dry_run_executes() {

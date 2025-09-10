@@ -1,8 +1,8 @@
 use once_cell::sync::OnceCell;
-use pyo3::exceptions::PyRuntimeError;
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
-use sorter_core::{compact_with_sort, validate_global_order, SortConfig};
+use sorter_core::{SortConfig, compact_with_sort, validate_global_order};
 
 static RUNTIME: OnceCell<tokio::runtime::Runtime> = OnceCell::new();
 
@@ -16,8 +16,19 @@ fn rt() -> &'static tokio::runtime::Runtime {
     })
 }
 
+fn is_nulls_first(nulls: &str) -> PyResult<bool> {
+    match nulls {
+        "first" => Ok(true),
+        "last" => Ok(false),
+        _ => Err(PyValueError::new_err(format!(
+            "nulls must be 'first' or 'last', not '{nulls}'"
+        ))),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 #[pyfunction]
-#[pyo3(signature = (table_uri, sort_columns, target_file_size_bytes=None, predicate=None, concurrency=None, dry_run=None, repartition_by_sort_key=None, nulls=None))]
+#[pyo3(signature = (table_uri, sort_columns, target_file_size_bytes=None, predicate=None, concurrency=None, dry_run=None, repartition_by_sort_key=None, nulls="first"))]
 fn compact(
     py: Python<'_>,
     table_uri: String,
@@ -27,7 +38,7 @@ fn compact(
     concurrency: Option<usize>,
     dry_run: Option<bool>,
     repartition_by_sort_key: Option<bool>,
-    nulls: Option<String>,
+    nulls: &str,
 ) -> PyResult<()> {
     let cfg = SortConfig {
         sort_columns,
@@ -36,27 +47,21 @@ fn compact(
         concurrency: concurrency.unwrap_or(8),
         dry_run: dry_run.unwrap_or(false),
         repartition_by_sort_key: repartition_by_sort_key.unwrap_or(false),
-        nulls_first: match nulls.as_deref() {
-            Some("last") => false,
-            _ => true,
-        },
+        nulls_first: is_nulls_first(nulls)?,
     };
     Python::detach(py, || rt().block_on(compact_with_sort(&table_uri, cfg)))
         .map_err(|e| PyRuntimeError::new_err(e.to_string()))
 }
 
 #[pyfunction]
-#[pyo3(signature = (table_uri, sort_columns, nulls=None))]
-fn validate(
-    py: Python<'_>,
+#[pyo3(signature = (table_uri, sort_columns, nulls="first"))]
+fn validate<'py>(
+    py: Python<'py>,
     table_uri: String,
     sort_columns: Vec<String>,
-    nulls: Option<String>,
-) -> PyResult<Bound<PyDict>> {
-    let nulls_first = match nulls.as_deref() {
-        Some("last") => false,
-        _ => true,
-    };
+    nulls: &'py str,
+) -> PyResult<Bound<'py, PyDict>> {
+    let nulls_first = is_nulls_first(nulls)?;
     let report = Python::detach(py, || {
         rt().block_on(validate_global_order(
             &table_uri,

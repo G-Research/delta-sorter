@@ -1,9 +1,8 @@
 import pytest
-from pathlib import Path
+from deltasort import SortOptimizer
 
 pd = pytest.importorskip("pandas")
 deltalake = pytest.importorskip("deltalake")
-from deltasort import SortOptimizer
 
 
 def _write_with_nulls(table_uri: str):
