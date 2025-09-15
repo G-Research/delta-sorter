@@ -260,15 +260,15 @@ pub(crate) async fn plan_rewrites(table_uri: &str, cfg: &SortConfig) -> Result<R
     let mut adds = table.get_active_add_actions_by_partitions(&[]);
     while let Some(add) = adds.next().await {
         let add = add?;
-        let Some(pvals) = add.partition_values() else {
-            continue;
+        let mut parts_vec: Vec<(String, String)> = match add.partition_values() {
+            Some(pvals) => pvals
+                .fields()
+                .iter()
+                .zip(pvals.values().iter())
+                .map(|(k, v)| (k.name.clone(), v.serialize()))
+                .collect(),
+            None => vec![],
         };
-        let mut parts_vec: Vec<(String, String)> = pvals
-            .fields()
-            .iter()
-            .zip(pvals.values().iter())
-            .map(|(k, v)| (k.name.clone(), v.serialize()))
-            .collect();
         parts_vec.sort_by(|a, b| a.0.cmp(&b.0));
         let key = if parts_vec.is_empty() {
             "__nopart__".to_string()
@@ -844,17 +844,22 @@ pub(crate) async fn rewrite_partition_tx(
     let mut adds = table.get_active_add_actions_by_partitions(&[]);
     while let Some(add) = adds.next().await {
         let add = add?;
-        let Some(pvals) = add.partition_values() else {
-            continue;
+        let mut parts_vec: Vec<(String, String)> = match add.partition_values() {
+            Some(pvals) => pvals
+                .fields()
+                .iter()
+                .zip(pvals.values().iter())
+                .map(|(k, v)| (k.name.clone(), v.serialize()))
+                .collect(),
+            None => Vec::new(),
         };
-        let mut parts_vec: Vec<(String, String)> = pvals
-            .fields()
-            .iter()
-            .zip(pvals.values().iter())
-            .map(|(k, v)| (k.name.clone(), v.serialize()))
-            .collect();
         parts_vec.sort_by(|a, b| a.0.cmp(&b.0));
-        if Some(parts_vec) == group.partition {
+        let current = if parts_vec.is_empty() {
+            None
+        } else {
+            Some(parts_vec)
+        };
+        if current == group.partition {
             bytes_in += add.size();
             removes.push(add.remove_action(false));
         }
