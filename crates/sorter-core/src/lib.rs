@@ -324,7 +324,7 @@ pub(crate) async fn rewrite_partition_overwrite(
     group: &RewriteGroup,
     cfg: &SortConfig,
 ) -> Result<()> {
-    use deltalake::datafusion::prelude::{SessionContext, col};
+    use deltalake::datafusion::prelude::{SessionContext, ident};
     use deltalake::operations::DeltaOps;
 
     let table = deltalake::open_table(table_uri)
@@ -346,7 +346,7 @@ pub(crate) async fn rewrite_partition_overwrite(
     let sort_exprs = cfg
         .sort_columns
         .iter()
-        .map(|c| col(c).sort(true, true))
+        .map(|c| ident(c).sort(true, true))
         .collect::<Vec<_>>();
     if !sort_exprs.is_empty() {
         df = df.sort(sort_exprs)?;
@@ -368,7 +368,7 @@ pub(crate) async fn execute_rewrites(
     plan: &RewritePlan,
     cfg: &SortConfig,
 ) -> Result<(Vec<deltalake::kernel::Add>, Vec<deltalake::kernel::Remove>)> {
-    use deltalake::datafusion::prelude::{SessionContext, col};
+    use deltalake::datafusion::prelude::{SessionContext, ident};
     use deltalake::writer::RecordBatchWriter;
     use futures::StreamExt;
 
@@ -388,7 +388,7 @@ pub(crate) async fn execute_rewrites(
     let sort_exprs = cfg
         .sort_columns
         .iter()
-        .map(|c| col(c).sort(true, true))
+        .map(|c| ident(c).sort(true, true))
         .collect::<Vec<_>>();
 
     let df = ctx.table("t").await.context("open DF table t")?;
@@ -428,7 +428,7 @@ pub(crate) async fn commit_full_sorted_overwrite(
     sort_columns: &[String],
     nulls_first: bool,
 ) -> Result<()> {
-    use deltalake::datafusion::prelude::{SessionContext, col};
+    use deltalake::datafusion::prelude::{SessionContext, ident};
     use deltalake::kernel::Remove;
 
     use deltalake::protocol::SaveMode;
@@ -448,7 +448,7 @@ pub(crate) async fn commit_full_sorted_overwrite(
     let ctx = SessionContext::new();
     let sort_exprs = sort_columns
         .iter()
-        .map(|c| col(format!(r#""{c}""#)).sort(true, nulls_first))
+        .map(|c| ident(c).sort(true, nulls_first))
         .collect::<Vec<_>>();
     let df = ctx.read_table(Arc::new(table.clone()))?.sort(sort_exprs)?;
     let (state, plan) = df.into_parts();
@@ -810,11 +810,11 @@ pub(crate) async fn rewrite_partition_tx(
     }
     let mut df = ctx.sql(&sql).await?;
     if !cfg.sort_columns.is_empty() {
-        use deltalake::datafusion::prelude::col;
+        use deltalake::datafusion::prelude::ident;
         let sort_exprs = cfg
             .sort_columns
             .iter()
-            .map(|c| col(c).sort(true, cfg.nulls_first))
+            .map(|c| ident(c).sort(true, cfg.nulls_first))
             .collect::<Vec<_>>();
         df = df.sort(sort_exprs)?;
     }
@@ -1003,19 +1003,19 @@ fn build_partition_predicate_expr_from_types(
     type_map: &std::collections::HashMap<String, deltalake::kernel::DataType>,
     parts: &[(String, String)],
 ) -> Expr {
-    use deltalake::datafusion::prelude::col;
+    use deltalake::datafusion::prelude::ident;
     use deltalake::kernel::{DataType as KDT, PrimitiveType as KPT};
     let mut pred: Option<Expr> = None;
     for (k, raw) in parts {
         let val = raw.trim_matches('"').to_string();
         let e = if val.eq_ignore_ascii_case("null") {
-            col(k).is_null()
+            ident(k).is_null()
         } else {
             match type_map.get(k) {
                 Some(KDT::Primitive(KPT::Boolean)) => {
                     let low = val.to_ascii_lowercase();
                     let litv = matches!(low.as_str(), "true" | "t" | "1");
-                    col(k).eq(Expr::Literal(
+                    ident(k).eq(Expr::Literal(
                         deltalake::datafusion::scalar::ScalarValue::Boolean(Some(litv)),
                         None,
                     ))
@@ -1025,12 +1025,12 @@ fn build_partition_predicate_expr_from_types(
                 | Some(KDT::Primitive(KPT::Integer))
                 | Some(KDT::Primitive(KPT::Long)) => {
                     if let Ok(n) = val.parse::<i64>() {
-                        col(k).eq(Expr::Literal(
+                        ident(k).eq(Expr::Literal(
                             deltalake::datafusion::scalar::ScalarValue::Int64(Some(n)),
                             None,
                         ))
                     } else {
-                        col(k).eq(Expr::Literal(
+                        ident(k).eq(Expr::Literal(
                             deltalake::datafusion::scalar::ScalarValue::Utf8(Some(val.clone())),
                             None,
                         ))
@@ -1038,19 +1038,19 @@ fn build_partition_predicate_expr_from_types(
                 }
                 Some(KDT::Primitive(KPT::Float)) | Some(KDT::Primitive(KPT::Double)) => {
                     if let Ok(f) = val.parse::<f64>() {
-                        col(k).eq(Expr::Literal(
+                        ident(k).eq(Expr::Literal(
                             deltalake::datafusion::scalar::ScalarValue::Float64(Some(f)),
                             None,
                         ))
                     } else {
-                        col(k).eq(Expr::Literal(
+                        ident(k).eq(Expr::Literal(
                             deltalake::datafusion::scalar::ScalarValue::Utf8(Some(val.clone())),
                             None,
                         ))
                     }
                 }
                 // Fallbacks: compare as string literal
-                _ => col(k).eq(Expr::Literal(
+                _ => ident(k).eq(Expr::Literal(
                     deltalake::datafusion::scalar::ScalarValue::Utf8(Some(val.clone())),
                     None,
                 )),
