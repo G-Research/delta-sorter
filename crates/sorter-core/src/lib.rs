@@ -687,17 +687,14 @@ async fn minmax_for_uri(
                     }
                 }
             }
-            match previous_tuple {
-                Some(ref prev) => {
-                    if cmp_tuple_with_nulls(prev, &t, nulls_first).is_gt() {
-                        // The min and max will be wrong, but since it's not sorted
-                        // that's irrelevant, we won't be using them.
-                        assert!(min_tuple.is_some() && max_tuple.is_some());
-                        is_ascending = false;
-                        break;
-                    }
+            if let Some(ref prev) = previous_tuple {
+                if cmp_tuple_with_nulls(prev, &t, nulls_first).is_gt() {
+                    // The min and max will be wrong, but since it's not sorted
+                    // that's irrelevant, we won't be using them.
+                    assert!(min_tuple.is_some() && max_tuple.is_some());
+                    is_ascending = false;
+                    break;
                 }
-                _ => (),
             }
             previous_tuple = Some(t.clone());
         }
