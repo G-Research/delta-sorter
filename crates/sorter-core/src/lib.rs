@@ -523,47 +523,6 @@ pub async fn validate_global_order(
     })
 }
 
-async fn file_is_monotonic(
-    ctx: &deltalake::datafusion::prelude::SessionContext,
-    uri: &str,
-    cols: &[String],
-    nulls_first: bool,
-) -> Result<bool> {
-    if cols.is_empty() {
-        return Ok(true);
-    }
-    let df = ctx
-        .read_parquet(vec![uri.to_string()], ParquetReadOptions::default())
-        .await?;
-    let batches = df.collect().await?;
-    if batches.is_empty() {
-        return Ok(true);
-    }
-    let schema = batches[0].schema();
-    let mut indices: Vec<usize> = Vec::with_capacity(cols.len());
-    for c in cols {
-        let idx = schema.index_of(c)?;
-        indices.push(idx);
-    }
-    let mut prev: Option<Vec<SortVal>> = None;
-    for batch in batches {
-        let rows = batch.num_rows();
-        for r in 0..rows {
-            let mut t = Vec::with_capacity(indices.len());
-            for &i in &indices {
-                t.push(arrow_value_to_sortval(batch.column(i).clone(), r));
-            }
-            if let Some(p) = &prev {
-                if cmp_tuple_with_nulls(&t, p, nulls_first).is_lt() {
-                    return Ok(false);
-                }
-            }
-            prev = Some(t);
-        }
-    }
-    Ok(true)
-}
-
 async fn partition_is_sorted(
     table_uri: &str,
     partition: &Option<Vec<(String, String)>>,
