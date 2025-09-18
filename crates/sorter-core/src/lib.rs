@@ -2,8 +2,8 @@ use anyhow::{Context, Result, anyhow};
 use deltalake::DeltaTable;
 use deltalake::arrow::array::{
     Array, ArrayRef, BooleanArray, Float32Array, Float64Array, Int32Array, Int64Array,
-    LargeStringArray, StringArray, TimestampMicrosecondArray, TimestampMillisecondArray,
-    TimestampNanosecondArray, TimestampSecondArray,
+    LargeStringArray, StringArray, StringViewArray, TimestampMicrosecondArray,
+    TimestampMillisecondArray, TimestampNanosecondArray, TimestampSecondArray,
 };
 use deltalake::arrow::datatypes::{DataType, TimeUnit};
 use deltalake::datafusion::logical_expr::Expr;
@@ -749,6 +749,14 @@ fn arrow_value_to_sortval(arr: ArrayRef, idx: usize) -> SortVal {
         }
         DataType::LargeUtf8 => {
             let a = arr.as_any().downcast_ref::<LargeStringArray>().unwrap();
+            if a.is_null(idx) {
+                SortVal::Null
+            } else {
+                SortVal::Str(a.value(idx).to_string())
+            }
+        }
+        DataType::Utf8View => {
+            let a = arr.as_any().downcast_ref::<StringViewArray>().unwrap();
             if a.is_null(idx) {
                 SortVal::Null
             } else {
