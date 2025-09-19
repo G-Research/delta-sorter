@@ -27,14 +27,9 @@ def test_validate_detects_unsorted(tmp_table: str):
         pass  # allow either outcome; ensure it runs
 
 
-def test_compact_and_validate_pass(tmp_table: str):
-    _write_unsorted_table(tmp_table)
-    opt = SortOptimizer(tmp_table)
-    opt.compact(["objectId", "dateTime"], concurrency=2)
-    opt.validate(["objectId", "dateTime"])
-
+def _read_and_validate(table_uri: str) -> None:
     # Verify ordering by reading back
-    dt = deltalake.DeltaTable(tmp_table)
+    dt = deltalake.DeltaTable(table_uri)
     pdf = dt.to_pandas()
     assert list(pdf["objectId"]) == ["A", "A", "B", "B"]
     assert list(pdf["dateTime"]) == [
@@ -43,6 +38,15 @@ def test_compact_and_validate_pass(tmp_table: str):
         "2021-01-01",
         "2021-02-02",
     ]
+    opt = SortOptimizer(table_uri)
+    opt.validate(["objectId", "dateTime"])
+
+
+def test_compact_and_validate_pass(tmp_table: str):
+    _write_unsorted_table(tmp_table)
+    opt = SortOptimizer(tmp_table)
+    opt.compact(["objectId", "dateTime"], concurrency=2)
+    _read_and_validate(tmp_table)
 
 
 def test_python_wrapper_repartition_full_overwrite(tmp_table: str):
@@ -51,4 +55,4 @@ def test_python_wrapper_repartition_full_overwrite(tmp_table: str):
     _write_unsorted_table(tmp_table)
     opt = SortOptimizer(tmp_table)
     opt.compact(["objectId", "dateTime"], repartition_by_sort_key=True, concurrency=2)
-    opt.validate(["objectId", "dateTime"])
+    _read_and_validate(tmp_table)
