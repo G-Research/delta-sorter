@@ -18,12 +18,6 @@ def _write_unsorted_table(table_uri: str, partition_by=None):
     )
 
 
-def _read_sorted(table_uri: str):
-    dt = deltalake.DeltaTable(table_uri)
-    pdf = dt.to_pandas()
-    return pdf.sort_values(["objectId", "dateTime"]).reset_index(drop=True)
-
-
 def test_validate_detects_unsorted(tmp_table: str):
     _write_unsorted_table(tmp_table)
     opt = SortOptimizer(tmp_table)
@@ -40,7 +34,8 @@ def test_compact_and_validate_pass(tmp_table: str):
     opt.validate(["objectId", "dateTime"])
 
     # Verify ordering by reading back
-    pdf = _read_sorted(tmp_table)
+    dt = deltalake.DeltaTable(tmp_table)
+    pdf = dt.to_pandas()
     assert list(pdf["objectId"]) == ["A", "A", "B", "B"]
     assert list(pdf["dateTime"]) == [
         "2021-02-01",
