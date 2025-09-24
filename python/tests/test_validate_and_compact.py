@@ -18,12 +18,6 @@ def _write_unsorted_table(table_uri: str, partition_by=None):
     )
 
 
-def _read_sorted(table_uri: str):
-    dt = deltalake.DeltaTable(table_uri)
-    pdf = dt.to_pandas()
-    return pdf.sort_values(["objectId", "dateTime"]).reset_index(drop=True)
-
-
 def test_validate_detects_unsorted(tmp_table: str):
     _write_unsorted_table(tmp_table)
     opt = SortOptimizer(tmp_table)
@@ -33,14 +27,10 @@ def test_validate_detects_unsorted(tmp_table: str):
         pass  # allow either outcome; ensure it runs
 
 
-def test_compact_and_validate_pass(tmp_table: str):
-    _write_unsorted_table(tmp_table)
-    opt = SortOptimizer(tmp_table)
-    opt.compact(["objectId", "dateTime"], concurrency=2)
-    opt.validate(["objectId", "dateTime"])
-
+def _read_and_validate(table_uri: str) -> None:
     # Verify ordering by reading back
-    pdf = _read_sorted(tmp_table)
+    dt = deltalake.DeltaTable(table_uri)
+    pdf = dt.to_pandas()
     assert list(pdf["objectId"]) == ["A", "A", "B", "B"]
     assert list(pdf["dateTime"]) == [
         "2021-02-01",
@@ -48,12 +38,22 @@ def test_compact_and_validate_pass(tmp_table: str):
         "2021-01-01",
         "2021-02-02",
     ]
+    opt = SortOptimizer(table_uri)
+    opt.validate(["objectId", "dateTime"])
 
 
+def test_compact_and_validate_pass(tmp_table: str):
+    _write_unsorted_table(tmp_table)
+    opt = SortOptimizer(tmp_table)
+    opt.compact(["objectId", "dateTime"], concurrency=2)
+    _read_and_validate(tmp_table)
+
+
+@pytest.mark.xfail(reason="See https://github.com/G-Research/delta-sorter/issues/17")
 def test_python_wrapper_repartition_full_overwrite(tmp_table: str):
     # Partitioned table; run full-table overwrite path from Python wrapper
     # Use unpartitioned table to exercise full-table path without partition complexity
     _write_unsorted_table(tmp_table)
     opt = SortOptimizer(tmp_table)
     opt.compact(["objectId", "dateTime"], repartition_by_sort_key=True, concurrency=2)
-    opt.validate(["objectId", "dateTime"])
+    _read_and_validate(tmp_table)

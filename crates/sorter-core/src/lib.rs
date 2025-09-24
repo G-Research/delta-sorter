@@ -2,8 +2,8 @@ use anyhow::{Context, Result, anyhow};
 use deltalake::DeltaTable;
 use deltalake::arrow::array::{
     Array, ArrayRef, BooleanArray, Float32Array, Float64Array, Int32Array, Int64Array,
-    LargeStringArray, StringArray, TimestampMicrosecondArray, TimestampMillisecondArray,
-    TimestampNanosecondArray, TimestampSecondArray,
+    LargeStringArray, StringArray, StringViewArray, TimestampMicrosecondArray,
+    TimestampMillisecondArray, TimestampNanosecondArray, TimestampSecondArray,
 };
 use deltalake::arrow::datatypes::{DataType, TimeUnit};
 use deltalake::datafusion::logical_expr::Expr;
@@ -297,7 +297,8 @@ pub(crate) async fn plan_rewrites(table_uri: &str, cfg: &SortConfig) -> Result<R
 
     let mut groups = Vec::new();
     for g in by_partition.into_values() {
-        match partition_is_sorted(table_uri, &g.partition, &cfg.sort_columns).await {
+        match partition_is_sorted(table_uri, &g.partition, &cfg.sort_columns, cfg.nulls_first).await
+        {
             Ok(true) => {
                 debug!(?g.partition, "partition already sorted; skipping");
             }
@@ -492,12 +493,14 @@ pub async fn validate_global_order(
     let mut violations = 0usize;
     let mut details = Vec::new();
     for uri in uris {
-        if let Some((mins, maxs)) = minmax_for_uri(&ctx, &uri, sort_columns).await? {
+        if let Some((mins, maxs, is_ascending)) =
+            minmax_for_uri(&ctx, &uri, sort_columns, nulls_first).await?
+        {
             entries.push((uri.clone(), mins, maxs));
-        }
-        if !file_is_monotonic(&ctx, &uri, sort_columns, nulls_first).await? {
-            violations += 1;
-            details.push(format!("monotonicity violation within file: {}", uri));
+            if !is_ascending {
+                violations += 1;
+                details.push(format!("monotonicity violation within file: {}", uri));
+            }
         }
     }
     let checked = entries.len();
@@ -520,51 +523,11 @@ pub async fn validate_global_order(
     })
 }
 
-async fn file_is_monotonic(
-    ctx: &deltalake::datafusion::prelude::SessionContext,
-    uri: &str,
-    cols: &[String],
-    nulls_first: bool,
-) -> Result<bool> {
-    if cols.is_empty() {
-        return Ok(true);
-    }
-    let df = ctx
-        .read_parquet(vec![uri.to_string()], ParquetReadOptions::default())
-        .await?;
-    let batches = df.collect().await?;
-    if batches.is_empty() {
-        return Ok(true);
-    }
-    let schema = batches[0].schema();
-    let mut indices: Vec<usize> = Vec::with_capacity(cols.len());
-    for c in cols {
-        let idx = schema.index_of(c)?;
-        indices.push(idx);
-    }
-    let mut prev: Option<Vec<SortVal>> = None;
-    for batch in batches {
-        let rows = batch.num_rows();
-        for r in 0..rows {
-            let mut t = Vec::with_capacity(indices.len());
-            for &i in &indices {
-                t.push(arrow_value_to_sortval(batch.column(i).clone(), r));
-            }
-            if let Some(p) = &prev {
-                if cmp_tuple_with_nulls(&t, p, nulls_first).is_lt() {
-                    return Ok(false);
-                }
-            }
-            prev = Some(t);
-        }
-    }
-    Ok(true)
-}
-
 async fn partition_is_sorted(
     table_uri: &str,
     partition: &Option<Vec<(String, String)>>,
     sort_columns: &[String],
+    nulls_first: bool,
 ) -> Result<bool> {
     let table = deltalake::open_table(table_uri).await?;
     // Build candidate file URIs
@@ -575,7 +538,12 @@ async fn partition_is_sorted(
     let ctx = deltalake::datafusion::prelude::SessionContext::new();
     let mut entries: Vec<(String, Vec<SortVal>, Vec<SortVal>)> = Vec::new();
     for uri in uris {
-        if let Some((mins, maxs)) = minmax_for_uri(&ctx, &uri, sort_columns).await? {
+        if let Some((mins, maxs, is_ascending)) =
+            minmax_for_uri(&ctx, &uri, sort_columns, nulls_first).await?
+        {
+            if !is_ascending {
+                return Ok(false);
+            }
             entries.push((uri, mins, maxs));
         }
     }
@@ -633,7 +601,8 @@ async fn minmax_for_uri(
     ctx: &deltalake::datafusion::prelude::SessionContext,
     uri: &str,
     cols: &[String],
-) -> Result<Option<(Vec<SortVal>, Vec<SortVal>)>> {
+    nulls_first: bool,
+) -> Result<Option<(Vec<SortVal>, Vec<SortVal>, bool)>> {
     if cols.is_empty() {
         return Ok(None);
     }
@@ -652,6 +621,8 @@ async fn minmax_for_uri(
     }
     let mut min_tuple: Option<Vec<SortVal>> = None;
     let mut max_tuple: Option<Vec<SortVal>> = None;
+    let mut previous_tuple: Option<Vec<SortVal>> = None;
+    let mut is_ascending = true;
     for batch in batches {
         let rows = batch.num_rows();
         for r in 0..rows {
@@ -662,7 +633,7 @@ async fn minmax_for_uri(
             match &min_tuple {
                 None => min_tuple = Some(t.clone()),
                 Some(current) => {
-                    if cmp_tuple_with_nulls(&t, current, true).is_lt() {
+                    if cmp_tuple_with_nulls(&t, current, nulls_first).is_lt() {
                         min_tuple = Some(t.clone());
                     }
                 }
@@ -670,15 +641,25 @@ async fn minmax_for_uri(
             match &max_tuple {
                 None => max_tuple = Some(t.clone()),
                 Some(current) => {
-                    if cmp_tuple_with_nulls(&t, current, true).is_gt() {
-                        max_tuple = Some(t);
+                    if cmp_tuple_with_nulls(&t, current, nulls_first).is_gt() {
+                        max_tuple = Some(t.clone());
                     }
                 }
             }
+            if let Some(ref prev) = previous_tuple {
+                if cmp_tuple_with_nulls(prev, &t, nulls_first).is_gt() {
+                    // The min and max will be wrong, but since it's not sorted
+                    // that's irrelevant, we won't be using them.
+                    assert!(min_tuple.is_some() && max_tuple.is_some());
+                    is_ascending = false;
+                    break;
+                }
+            }
+            previous_tuple = Some(t.clone());
         }
     }
     match (min_tuple, max_tuple) {
-        (Some(mins), Some(maxs)) => Ok(Some((mins, maxs))),
+        (Some(mins), Some(maxs)) => Ok(Some((mins, maxs, is_ascending))),
         _ => Ok(None),
     }
 }
@@ -727,6 +708,14 @@ fn arrow_value_to_sortval(arr: ArrayRef, idx: usize) -> SortVal {
         }
         DataType::LargeUtf8 => {
             let a = arr.as_any().downcast_ref::<LargeStringArray>().unwrap();
+            if a.is_null(idx) {
+                SortVal::Null
+            } else {
+                SortVal::Str(a.value(idx).to_string())
+            }
+        }
+        DataType::Utf8View => {
+            let a = arr.as_any().downcast_ref::<StringViewArray>().unwrap();
             if a.is_null(idx) {
                 SortVal::Null
             } else {
