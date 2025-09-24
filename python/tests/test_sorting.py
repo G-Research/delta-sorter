@@ -8,6 +8,7 @@
 import pytest
 from hypothesis import given, strategies as st
 from deltasort import SortOptimizer
+
 pd = pytest.importorskip("pandas")
 deltalake = pytest.importorskip("deltalake")
 
@@ -21,7 +22,11 @@ STRINGS = st.text()
 
 @pytest.mark.parametrize("values_strategy", [INTS, BOOLS, SIMPLE_FLOATS, STRINGS])
 @given(data=st.data())
-def test_single_column_single_file(tmp_path_factory: pytest.TempPathFactory, values_strategy: st.SearchStrategy, data: st.SearchStrategy) -> None:
+def test_single_column_single_file(
+    tmp_path_factory: pytest.TempPathFactory,
+    values_strategy: st.SearchStrategy,
+    data: st.SearchStrategy,
+) -> None:
     """
     For a single file with a single column and no nulls, requesting a sort
     actually sorts the data, and validation correctly identifies sorted vs
