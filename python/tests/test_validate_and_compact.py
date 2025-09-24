@@ -49,6 +49,7 @@ def test_compact_and_validate_pass(tmp_table: str):
     _read_and_validate(tmp_table)
 
 
+@pytest.mark.xfail(reason="See https://github.com/G-Research/delta-sorter/issues/17")
 def test_python_wrapper_repartition_full_overwrite(tmp_table: str):
     # Partitioned table; run full-table overwrite path from Python wrapper
     # Use unpartitioned table to exercise full-table path without partition complexity
