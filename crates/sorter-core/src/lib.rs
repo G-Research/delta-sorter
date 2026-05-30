@@ -207,7 +207,7 @@ pub async fn compact_with_sort(table_uri: &str, cfg: SortConfig) -> Result<()> {
         let mut partitions_processed: usize = 0;
 
         use futures::stream;
-        let results: Vec<Result<PartitionMetrics>> = stream::iter(plan.groups.into_iter())
+        let results: Vec<Result<PartitionMetrics>> = stream::iter(plan.groups)
             .map(|g| {
                 let table_uri = table_uri.to_string();
                 let cfg = cfg.clone();
@@ -310,7 +310,7 @@ pub(crate) async fn plan_rewrites(table_uri: &str, cfg: &SortConfig) -> Result<R
         }
     }
 
-    groups.sort_by(|a, b| b.estimated_bytes.cmp(&a.estimated_bytes));
+    groups.sort_by_key(|group| std::cmp::Reverse(group.estimated_bytes));
 
     Ok(RewritePlan {
         table_uri: table_uri.to_string(),
@@ -646,14 +646,14 @@ async fn minmax_for_uri(
                     }
                 }
             }
-            if let Some(ref prev) = previous_tuple {
-                if cmp_tuple_with_nulls(prev, &t, nulls_first).is_gt() {
-                    // The min and max will be wrong, but since it's not sorted
-                    // that's irrelevant, we won't be using them.
-                    assert!(min_tuple.is_some() && max_tuple.is_some());
-                    is_ascending = false;
-                    break;
-                }
+            if let Some(ref prev) = previous_tuple
+                && cmp_tuple_with_nulls(prev, &t, nulls_first).is_gt()
+            {
+                // The min and max will be wrong, but since it's not sorted
+                // that's irrelevant, we won't be using them.
+                assert!(min_tuple.is_some() && max_tuple.is_some());
+                is_ascending = false;
+                break;
             }
             previous_tuple = Some(t.clone());
         }
