@@ -1,4 +1,4 @@
-.PHONY: help build-cli fmt lint test test-all py-build py-dev py-test setup-py setup-maturin clean
+.PHONY: help build-cli fmt lint lint-all test test-all py-build py-dev py-lint py-test py-typecheck setup-py setup-maturin clean
 
 PY ?= python3
 MATURIN ?= $(PY) -m maturin
@@ -15,6 +15,7 @@ help:
 	@echo "  setup-maturin - Install maturin (and patchelf on Linux)"
 	@echo "  setup-py      - Install Python test/runtime deps (pytest, deltalake, pandas, pyarrow)"
 	@echo "  py-test       - Run Python tests (expects native module installed via py-dev)"
+	@echo "  py-typecheck  - Run mypy against the Python package"
 	@echo "  clean         - Clean cargo artifacts"
 
 build-cli:
@@ -49,12 +50,16 @@ py-dev:
 py-lint:
 	cd python && $(PY) -m ruff check
 	cd python && $(PY) -m ruff format --check
+	$(MAKE) py-typecheck
+
+py-typecheck:
+	cd python && $(PY) -m mypy pysrc
 
 setup-maturin:
 	$(PY) -m pip install -U "maturin[patchelf]"
 
 setup-py:
-	$(PY) -m pip install -U pytest hypothesis deltalake pandas pyarrow ruff
+	$(PY) -m pip install -U pytest hypothesis deltalake pandas pyarrow ruff mypy
 
 py-test: py-dev
 	pytest -q python/tests
