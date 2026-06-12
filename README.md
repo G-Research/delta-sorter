@@ -11,7 +11,7 @@ Compaction and global lexicographic ordering for Delta Lake tables, built on del
 ## Components
 - `crates/sorter-core`: core library for planning, rewriting, committing, and validating.
 - `crates/sorter-cli`: CLI `deltasort` wrapping the core library.
-- `python/`: native Python module (PyO3) exposing sorter-core to Python as `deltasort_rs`, with thin Python wrapper that calls the native module.
+- `python/`: native Python module (PyO3) exposing sorter-core through the `deltasort` package, with a thin Python wrapper that calls the native module.
 
 ## Install / Build
 Use one of the following workflows (equivalent):
@@ -67,7 +67,7 @@ Python native bindings (PyO3)
 - Install maturin: `pip install maturin` (Linux users may prefer `pip install "maturin[patchelf]"`)
 - Build wheel: `python -m maturin build -m python/Cargo.toml`
 - Dev install into current env: `python -m maturin develop -m python/Cargo.toml`
-- Verify: `python -c "import deltasort_rs; print('ok')"`
+- Verify: `python -c "from deltasort import SortOptimizer; print('ok')"`
 
 ## CLI Usage
 - Sort columns are required and define lexicographic order.
@@ -130,7 +130,7 @@ Clarification: “read without sorting”
 - The phrase “downstream clients can read without sorting” means consumers can scan the table in key order without issuing an extra sort at query time. It does not mean deltasort itself “mostly reads without sorting.” The tool sorts all rewritten data; only already-valid partitions are skipped to minimize work.
 
 ## Python Usage
-Install runtime deps in your environment: `pip install deltalake pandas pyarrow` (for the examples). Install the native bindings as above (maturin build/develop) so `deltasort_rs` is available.
+Install runtime deps in your environment: `pip install deltalake pandas pyarrow` (for the examples). Install the native bindings as above (maturin build/develop) so `deltasort` is available.
 
 Basic usage
 ```python
@@ -161,7 +161,7 @@ The validator performs two checks:
 Use `--validate-only` (or `SortOptimizer.validate(...)`) to audit ordering without modifying the table. It reports the number of files checked and total violations; the Python wrapper raises on violations.
 
 ## Testing
-- Makefile: `make test-all` runs Rust tests then Python tests. Requires `make py-dev` and `make setup-py` first.
+- Makefile: `make test-all` runs Rust tests then Python tests. Requires `make setup-maturin` and `make setup-py` first.
 - Rust: `cargo test -p sorter-core --lib`
 - Python:
   - `pip install pytest deltalake pandas pyarrow`
