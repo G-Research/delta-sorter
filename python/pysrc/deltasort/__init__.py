@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 
 from .deltasort import compact as rs_compact, validate as rs_validate
 
@@ -17,7 +17,7 @@ class SortOptimizer:
         concurrency: int = 8,
         dry_run: bool = False,
         repartition_by_sort_key: bool = False,
-        nulls: str = "first",
+        nulls: Literal["first", "last"] = "first",
     ) -> None:
         rs_compact(
             table_uri=self.table_uri,
@@ -30,7 +30,11 @@ class SortOptimizer:
             nulls=nulls,
         )
 
-    def validate(self, sort_columns: list[str], nulls: str = "first") -> None:
+    def validate(
+        self,
+        sort_columns: list[str],
+        nulls: Literal["first", "last"] = "first",
+    ) -> None:
         """Run ordering validation and raise if violations are found."""
         # rs_validate returns a dict with validator report; raise if violations
         rep = rs_validate(self.table_uri, list(sort_columns), nulls)
