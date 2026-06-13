@@ -23,6 +23,8 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
+      - name: Rust build cache
+        uses: Swatinem/rust-cache@v2
       - name: Create Python virtual environment
         run: |
           python -m venv .venv
@@ -32,6 +34,8 @@ jobs:
         run: |
           make setup-maturin
           make setup-py
+      - name: Format Rust
+        run: cargo fmt --all -- --check
       - name: Lint
         run: make lint-all
       - name: Test
